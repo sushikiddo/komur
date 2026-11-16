@@ -1,0 +1,6 @@
+# Optional voice feature dependencies. The model itself is fetched only after
+# the user explicitly requests it in bootstrap_setup.py.
+faster-whisper==1.2.1
+sounddevice==0.5.3
+av==16.0.1
+huggingface-hub==2.4.0

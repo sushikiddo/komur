@@ -1,0 +1,17 @@
+Kömür third-party component notices
+====================================
+
+Kömür's Windows executable includes third-party software. Review the notices
+and license texts shipped by the corresponding projects before redistribution.
+
+Optional Ollama runtime: https://github.com/ollama/ollama (MIT License)
+Optional Qwen models: https://huggingface.co/Qwen/Qwen3-4B and
+  https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
+  Selected Qwen model licenses: Apache-2.0
+Optional faster-whisper-small model: https://huggingface.co/Systran/faster-whisper-small
+  Model license: MIT
+Optional faster-whisper runtime: https://github.com/SYSTRAN/faster-whisper (MIT)
+Optional sounddevice runtime: https://python-sounddevice.readthedocs.io/ (MIT)
+
+Ollama and the optional model files are downloaded separately only when the
+user requests setup. The Kömür installer does not redistribute those files.
