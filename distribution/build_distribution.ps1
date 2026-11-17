@@ -22,7 +22,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
 $smokeRoot = Join-Path $env:TEMP ("KomurInstallerSmoke-" + [guid]::NewGuid().ToString('N'))
 $installRoot = Join-Path $smokeRoot 'Installed'
 $dataRoot = Join-Path $smokeRoot 'UserData'
-$setup = Join-Path $root 'dist-installer\Komur-Setup-1.2.0-x64.exe'
+$setup = Join-Path $root 'dist-installer\Komur-Setup-1.2.1-x64.exe'
 New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
 $sentinel = Join-Path $dataRoot 'settings.json'
 [IO.File]::WriteAllText($sentinel, '{"keep":true}', [Text.Encoding]::UTF8)

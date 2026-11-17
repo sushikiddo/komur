@@ -229,7 +229,24 @@ def mic_in_use_apps() -> set[str]:
                         apps.add(parse_mic_key_name(name))
     except Exception:
         return set()
+    if apps:
+        # Çöken/zorla kapatılan uygulama kayıtta "kullanıyor" olarak kalabilir: yalnız çalışanları say.
+        running = _running_process_names()
+        if running is not None:
+            apps = {a for a in apps if a in running}
     return apps
+
+
+def _running_process_names() -> set[str] | None:
+    """Çalışan süreç adları (küçük harf, .exe'siz); okunamazsa None."""
+    import subprocess
+    try:
+        out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=5,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = {line.split('","')[0].strip('"').lower() for line in out.splitlines() if line.strip()}
+    return {n[:-4] if n.endswith(".exe") else n for n in names}
 
 
 def format_duration(seconds: float) -> str:

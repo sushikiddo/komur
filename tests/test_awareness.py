@@ -177,3 +177,23 @@ def test_video_beats_open_voice_channel_and_away_beats_mic():
     assert classify_activity(yt, media='video', idle=5, mic_apps={'discord'}) == 'video'
     assert classify_activity(yt, media=None, idle=5, mic_apps={'discord'}) == 'meeting'
     assert classify_activity(yt, media=None, idle=900, mic_apps={'discord'}) == 'away'
+
+
+def test_browser_session_type_is_not_trusted():
+    from awareness import media_kind
+    chrome = [{'app': 'chrome.exe', 'type': 'Music', 'title': 'Bir video', 'artist': ''}]
+    yt = {'process_name': 'chrome.exe', 'category': 'browsing', 'hint': 'YouTube', 'title': 'Bir video - YouTube'}
+    ytm = {'process_name': 'chrome.exe', 'category': 'media', 'hint': 'YouTube Music', 'title': 'Şarkı - YouTube Music'}
+    other = {'process_name': 'code.exe', 'category': 'coding', 'hint': None, 'title': 'x'}
+    assert media_kind(chrome, yt) == 'video'
+    assert media_kind(chrome, ytm) == 'music'
+    assert media_kind(chrome, other, browser_memory='video') == 'video'
+    assert media_kind([{'app': 'Spotify.exe', 'type': 'Music'}], other) == 'music'
+
+
+def test_stale_mic_registry_entry_ignored(monkeypatch):
+    import context
+    monkeypatch.setattr(context, "_running_process_names", lambda: {"chrome", "spotify"})
+    apps = {"discord", "chrome"}
+    running = context._running_process_names()
+    assert {a for a in apps if a in running} == {"chrome"}

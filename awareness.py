@@ -78,7 +78,13 @@ def media_kind(sessions, info=None, fullscreen=False, browser_memory=None) -> st
         app = (s.get('app') or '').lower()
         ptype = (s.get('type') or '').lower()
         title = ((s.get('title') or '') + ' ' + (s.get('artist') or '')).lower()
-        if ptype == 'video':
+        if is_browser(app) and ptype == 'music':
+            # Chrome, YouTube videolarını bile "Music" bildirir: tarayıcıda bu türe değil sekmeye bak.
+            kind = (browser_hint(info) if is_browser(_proc(info)) else None) or browser_memory
+            if kind is None and _has(title, _VIDEO_TITLE) and not _has(title, _MUSIC_TITLE):
+                kind = 'video'
+            video, music = video or kind == 'video', music or kind != 'video'
+        elif ptype == 'video':
             video = True
         elif ptype == 'music':
             music = True
