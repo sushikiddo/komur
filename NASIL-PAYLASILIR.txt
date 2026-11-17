@@ -9,6 +9,6 @@ KÖMÜR'Ü BAŞKA BİLGİSAYARA KURMA
 
 Paket sizin konuşmalarınızı, notlarınızı, ayarlarınızı ve API anahtarlarınızı içermez.
 Kurulum kod imzalı değildir; Windows yayımlayıcı uyarısı gösterebilir. Yalnız güvendiğiniz kaynaktan alın.
-SHA-256 kontrolü: PowerShell'de Get-FileHash .\Komur-Setup-1.1.0-x64.exe -Algorithm SHA256
+SHA-256 kontrolü: PowerShell'de Get-FileHash .\Komur-Setup-1.0.0-x64.exe -Algorithm SHA256
 
 Dosya paylaşılmaya hazırdır; otomatik olarak bir web sitesine veya herkese açık hesaba yüklenmemiştir.

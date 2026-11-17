@@ -15,7 +15,20 @@ class EffectOrchestrator:
         self.particles = PhysicsParticleSystem(canvas, width, height, quality)
         self.sound_enabled = sound_enabled
         self.quality = quality
+        self.cat_screen_x = None
+        self.screen_w = 1920
         self._micro_timers = {}
+
+    def _play_sound(self, name, **extra):
+        """Play a sound routed with the cat's current 2D screen X stereo pan."""
+        sounds.play(
+            name,
+            enabled=self.sound_enabled,
+            quality=self.quality,
+            pan_x=getattr(self, "cat_screen_x", None),
+            screen_w=getattr(self, "screen_w", 1920),
+            **extra,
+        )
 
     def set_sound(self, enabled):
         self.sound_enabled = bool(enabled)
@@ -29,58 +42,58 @@ class EffectOrchestrator:
         cy = y + self.height / 2
 
         if kind == "pet":
-            sounds.play("purr", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("purr")
             self.particles.emit("heart", cx, cy, count=30)
             self.particles.emit("fur_ruffle", cx, cy - 30, count=15)
             self._schedule_micro("whisker_vibrate", cx - 20, cy - 10, 0.3, 8)
             self._schedule_micro("whisker_vibrate", cx + 20, cy - 10, 0.3, 8)
 
         elif kind == "feed":
-            sounds.play("happy", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("happy")
             self.particles.emit("fur_ruffle", cx, cy - 20, count=18)
 
         elif kind == "play":
-            sounds.play("play", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("play")
             self.particles.emit("ball_trail", cx, cy, count=20)
             self.particles.emit("fur_ruffle", cx, cy, count=12)
 
         elif kind == "knead":
-            sounds.play("knead", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("knead")
             self.particles.emit("pawprint", cx, cy + 20, count=15)
             self._schedule_repeat("pawprint", cx, cy + 20, 0.4, 8, count=6)
 
         elif kind == "chirp":
-            sounds.play("chirp", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("chirp")
             self._schedule_micro("ear_twitch", cx - 25, cy - 35, 0.15, 5)
             self._schedule_micro("ear_twitch", cx + 25, cy - 35, 0.15, 5)
 
         elif kind == "hiss":
-            sounds.play("hiss", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("hiss")
             self.particles.emit("fur_ruffle", cx, cy, count=25)
             self._schedule_micro("ear_twitch", cx - 30, cy - 40, 0.5, 10)
 
         elif kind == "sneeze":
-            sounds.play("sneeze", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("sneeze")
             self.particles.emit("breath", cx, cy - 30, count=30)
             self._schedule_shake(cx, cy - 20, 0.3, 10)
 
         elif kind == "sleep":
-            sounds.play("sleep", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("sleep")
             self.particles.emit("z_raise", cx, cy - 40, count=6)
             self._schedule_breathing(cx, cy - 20, 4.0)
 
         elif kind == "wake":
-            sounds.play("meow", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("meow", pitch_shift="auto")
             self.particles.emit("fur_ruffle", cx, cy, count=18)
             self._schedule_micro("ear_twitch", cx - 25, cy - 35, 0.2, 6)
             self._schedule_micro("ear_twitch", cx + 25, cy - 35, 0.2, 6)
 
         elif kind == "follow_start":
-            sounds.play("meow", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("meow", pitch_shift="auto")
             self.particles.emit("breath", cx, cy, count=10)
 
         elif kind == "idle_purr":
-            sounds.play("purr", enabled=self.sound_enabled, quality=self.quality)
+            self._play_sound("purr")
             self.particles.emit("breath", cx, cy - 15, count=6)
 
         elif kind == "roll":

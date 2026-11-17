@@ -11,22 +11,24 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from ai import CatAI
+from focus import parse_focus_command
 from context import ActivityTracker
 from pc_actions import PCActions, ActionSpec
 from memory_store import MemoryStore
 from chat_bubble import ChatBubble
 from voice import VoiceService
 from screen_assist import ScreenAssist
-
-PROVIDER_LABELS = {"local": "Bilgisayarımda (ücretsiz)", "auto": "Otomatik",
-                   "openai": "OpenAI API", "api": "Claude API", "cli": "Claude Code",
-                   "offline": "Çevrimdışı komutlar"}
-
+import settings_ui
+from update_ui import UpdateFlow
+from settings_ui import ACCESSORY_LABELS, ACTIVITY_LABELS, PROVIDER_LABELS
 
 class AssistantUI:
     def __init__(self, app):
         self.app = app
         self.events = queue.Queue()
+        self.delta_events = queue.Queue()      # akan yanıt parçaları: (istek no, metin | None)
+        self._stream_id = 0
+        self._partial = ""
         self.behavior_requests = queue.Queue()
         self.session_options = {}
         self.chat_log = []
@@ -60,7 +62,7 @@ class AssistantUI:
                 "bored", "roll", "yawn", "play", "sleep", "wake", "pet", "feed", "wander", "follow", "dance", "watch"]}},
              "required": ["behavior"]}, self.request_behavior))
         self.register_assistance_actions()
-        self.ai = CatAI(self.get_option, self.actions, self.context_for_ai)
+        self.ai = CatAI(self.get_option, self.actions, self.context_for_ai, habits=self.memory)
         if self.app.settings.get("history_enabled"):
             past = self.chat_log[-20:]
             self.ai.transcript = [("user" if speaker == "Sen" else "assistant", text) for speaker, text in past]
@@ -73,6 +75,13 @@ class AssistantUI:
         self.busy = False
         self.closed = False
         self._cancel_requested = False
+        self._habit_check = float("-inf")
+        self.updates = UpdateFlow(self.app)
+        self._wake_notices = queue.Queue()
+        self._wake_error_shown = ""
+        self._wake_generation = 0
+        if self.app.settings.get("wake_word", False):
+            self.start_wake()
 
     def register_assistance_actions(self):
         def unavailable(*args, **kwargs):
@@ -107,9 +116,25 @@ class AssistantUI:
     def context_for_ai(self):
         memory = self.memory.context() if self.memory else ""
         screen = self.screen_context if time.monotonic() < self.screen_expires else ""
+        sharing = bool(self.app.settings.get("activity_context"))
+        current = getattr(getattr(self, "tracker", None), "current", None)
+        category = current.get("category") if sharing and isinstance(current, dict) else None
         return {"summary": "\n".join(part for part in (self.context_text[:500], memory[:1500], screen[:3500]) if part),
                 "screen_shared": bool(screen),
-                "untrusted_context": self.context_tainted or bool(self.app.settings.get("activity_context"))}
+                "untrusted_context": self.context_tainted or sharing,
+                "category": category if isinstance(category, str) else None,   # yalnız sınıf, başlık değil
+                "cat_state": self.cat_state_text()}
+
+    def cat_state_text(self):
+        """Kedinin kendi durumu (kullanıcı verisi değil): modele kısa bir satır."""
+        brain = getattr(getattr(self, "app", None), "brain", None)
+        try:
+            energy, happiness = float(brain.energy), float(brain.happiness)
+        except (AttributeError, TypeError, ValueError):
+            return ""
+        tired = "yorgun" if energy < 30 else ("dinç" if energy > 70 else "idare eder")
+        mood = "keyifsiz" if happiness < 40 else ("keyifli" if happiness > 70 else "sakin")
+        return f"{tired}, {mood}"
 
     def list_reminders(self):
         if not self.memory:
@@ -294,82 +319,8 @@ class AssistantUI:
         self.entry.bind("<Return>", lambda event: self.send())
         self.send_button = ttk.Button(body, text="Gönder", command=self.send)
         self.send_button.pack(anchor="e", pady=5)
-        self.backend = tk.StringVar(value=PROVIDER_LABELS.get(self.app.settings.get("ai_backend"), PROVIDER_LABELS["local"]))
-        connection = ttk.LabelFrame(self.settings_page, text="AI bağlantısı", padding=8)
-        connection.pack(fill="x", pady=6)
-        connection.columnconfigure(1, weight=1)
-        ttk.Label(connection, text="Sağlayıcı").grid(row=0, column=0, sticky="w")
-        ttk.Combobox(connection, textvariable=self.backend,
-                     values=tuple(PROVIDER_LABELS.values()), state="readonly").grid(row=0, column=1, sticky="ew")
-        local = self.selected_provider() == "local"
-        self.model = tk.StringVar(value=self.app.settings.get("ai_local_model" if local else "ai_openai_model"))
-        self.api_url = tk.StringVar(value=self.app.settings.get("ai_local_base_url" if local else "ai_openai_base_url"))
-        self.api_key = tk.StringVar()
-        for row, (label, variable) in enumerate((("OpenAI / yerel model", self.model),
-                                                ("API adresi", self.api_url),
-                                                ("API anahtarı (bu oturum)", self.api_key)), start=1):
-            ttk.Label(connection, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8))
-            entry = ttk.Entry(connection, textvariable=variable, show="•" if row == 3 else "")
-            entry.grid(row=row, column=1, sticky="ew", pady=2)
-            if row == 3:
-                self.key_entry = entry
-            elif row == 1:
-                self.model_entry = entry
-            elif row == 2:
-                self.url_entry = entry
-        controls = ttk.Frame(connection)
-        controls.grid(row=4, column=0, columnspan=2, sticky="e", pady=(5, 0))
-        self.apply_button = ttk.Button(controls, text="Ayarları uygula", command=self.save_options)
-        self.apply_button.pack(side="left", padx=4)
-        self.check_button = ttk.Button(controls, text="Bağlantıyı dene", command=self.check_connection)
-        self.check_button.pack(side="left")
-        ttk.Label(connection, text="local: ücretsiz, anahtarsız, bilgisayarında. API anahtarı dosyaya yazılmaz.", wraplength=580).grid(
-            row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.context_enabled = tk.BooleanVar(value=self.app.settings.get("activity_context"))
-        ttk.Checkbutton(self.settings_page, text="Aktif pencere başlığını AI ile paylaş ve etkinliğe göre konuş", variable=self.context_enabled,
-                        command=self.set_activity_enabled).pack(anchor="w")
-        for key, label in (("activity_reactions", "Müzik ve videoya yerel tepki ver (AI ile paylaşılmaz)"),
-                           ("focus_mode", "Oyunlarda sessiz ve sakin kal"),
-                           ("voice_preview", "Sesle yazdığımı göndermeden önce göster")):
-            variable = tk.BooleanVar(value=self.app.settings.get(key))
-            ttk.Checkbutton(self.settings_page, text=label, variable=variable,
-                            command=lambda k=key, v=variable: self.app.settings.set(k, v.get())).pack(anchor="w")
-        self.history_enabled = tk.BooleanVar(value=self.app.settings.get("history_enabled"))
-        ttk.Checkbutton(self.settings_page, text="Sohbet geçmişini bu bilgisayarda sakla", variable=self.history_enabled,
-                        command=self.set_history_enabled).pack(anchor="w")
-        self.voice_enabled = tk.BooleanVar(value=self.app.settings.get("voice_replies"))
-        ttk.Checkbutton(self.settings_page, text="Yanıtları Türkçe sesli oku", variable=self.voice_enabled,
-                        command=lambda: self.set_voice_enabled(self.voice_enabled.get())).pack(anchor="w")
-        microphone_bar = ttk.Frame(self.settings_page)
-        microphone_bar.pack(fill='x', pady=4)
-        ttk.Label(microphone_bar, text='Mikrofon:').pack(side='left')
-        devices = self.voice.list_input_devices()
-        device_labels = {'Windows varsayılanı': None, **{f"{d['id']}: {d['name']}": d['id'] for d in devices}}
-        mic = ttk.Combobox(microphone_bar, values=list(device_labels), state='readonly')
-        mic.set(next((label for label, index in device_labels.items() if index == self.voice.input_device), 'Windows varsayılanı'))
-        mic.pack(side='left', fill='x', expand=True, padx=5)
-        def select_microphone(event):
-            self.voice.input_device = device_labels[mic.get()]
-            self.app.settings.set('voice_input_device', self.voice.input_device)
-        mic.bind('<<ComboboxSelected>>', select_microphone)
-        rate_bar = ttk.Frame(self.settings_page)
-        rate_bar.pack(fill='x')
-        ttk.Label(rate_bar, text='Konuşma hızı:').pack(side='left')
-        rate = tk.IntVar(value=self.voice.speech_rate)
-        def change_rate(value):
-            self.voice.speech_rate = int(float(value))
-            self.app.settings.set('speech_rate', self.voice.speech_rate)
-        tk.Scale(rate_bar, from_=-5, to=5, orient='horizontal', variable=rate,
-                 command=change_rate, showvalue=True, length=180).pack(side='left')
+        settings_ui.build_settings_page(self)
         ttk.Button(body, text="Küçük sohbete dön", command=self.back_to_compact).pack(anchor="e")
-        ttk.Button(self.settings_page, text="Ses ve AI kurulum yardımcısı", command=self.launch_setup).pack(anchor="w", pady=12)
-        ttk.Button(self.settings_page, text="Bekleyen hatırlatıcıları iptal et", command=self.clear_reminders).pack(anchor="w")
-        ttk.Button(self.settings_page, text="Hafızamı yönet", command=self.manage_memory).pack(anchor="w", pady=3)
-        ttk.Button(self.settings_page, text="Ses, AI ve bilgisayar durumunu kontrol et", command=self.check_health).pack(anchor="w")
-        self.backend.trace_add("write", self.provider_changed)
-        self.key_entry.configure(state="disabled" if local else "normal")
-        self.model_entry.configure(state="readonly" if local else "normal")
-        self.url_entry.configure(state="readonly" if local else "normal")
         for speaker, text in self.chat_log:
             self.write_history(speaker, text)
         if not self.chat_log:
@@ -378,109 +329,95 @@ class AssistantUI:
         self.entry.focus_set()
 
     def save_options(self):
-        if self.busy:
-            return False
-        local = self.selected_provider() == "local"
-        if self.api_key.get().strip() and not local:
-            self.session_options["ai_openai_key"] = self.api_key.get().strip()
-            self.api_key.set("")
-        options = {"ai_local_model" if local else "ai_openai_model": self.model.get().strip(),
-                   "ai_local_base_url" if local else "ai_openai_base_url": self.api_url.get().strip()}
-        self.app.settings.update(ai_backend=self.selected_provider(), activity_context=self.context_enabled.get(),
-                                 history_enabled=self.history_enabled.get(), voice_replies=self.voice_enabled.get(), **options)
-        if self.compact is not None:
-            self.compact.voice_enabled.set(self.voice_enabled.get())
-        if not self.voice_enabled.get():
-            self.voice.stop()
-        self.status.configure(text=self.ai.backend_status())
-        return True
+        return settings_ui.save_options(self)
 
     def check_health(self):
-        from diagnostics import health_report
-        self.submit(lambda: "\n".join(health_report(self.voice)), kind="connection")
+        return settings_ui.check_health(self)
 
     def manage_memory(self):
-        if not self.memory:
+        return settings_ui.manage_memory(self)
+
+    def set_habit_enabled(self):
+        return settings_ui.set_habit_enabled(self)
+
+    def set_accessory(self, label):
+        return settings_ui.set_accessory(self, label)
+
+    def set_activity_level(self, label):
+        return settings_ui.set_activity_level(self, label)
+
+    # -- "Hey Kömür" -------------------------------------------------------
+    def set_wake_enabled(self):
+        return settings_ui.set_wake_enabled(self)
+
+    def start_wake(self):
+        """Dinleyiciyi arka planda başlat (model/mikrofon denetimi yavaş olabilir); hata ana iş parçacığında gösterilir."""
+        self._wake_generation += 1
+        generation = self._wake_generation
+
+        def run():
+            try:
+                self.voice.start_wake_listener(self._wake_heard)
+            except Exception as error:  # noqa: BLE001 - VoiceError dahil; çökme yok
+                if generation == self._wake_generation:
+                    self._wake_notices.put(str(error) or "Sesle uyandırma başlatılamadı.")
+        threading.Thread(target=run, daemon=True).start()
+
+    def stop_wake(self):
+        self._wake_generation += 1
+        self._wake_error_shown = ""
+        self.voice.stop_wake_listener()
+        self._show_wake_status("")
+
+    def _wake_heard(self):
+        """Dinleyici iş parçacığı: yalnız ana iş parçacığına aktarır."""
+        try:
+            self.app.root.after(0, self.on_wake)
+        except Exception:  # noqa: BLE001 - uygulama kapanıyor olabilir
+            pass
+
+    def on_wake(self):
+        if self.closed or not self.app.settings.get("wake_word", False):
             return
-        from tkinter import simpledialog, filedialog
-        win = tk.Toplevel(self.app.root)
-        win.title("Kömür — Hatırladıklarım")
-        win.geometry("490x350")
-        listing = tk.Listbox(win, font=("Segoe UI", 10))
-        listing.pack(fill="both", expand=True, padx=10, pady=10)
-        rows = []
-        def refresh():
-            rows[:] = self.memory.notes(limit=100)
-            listing.delete(0, "end")
-            for row in rows:
-                listing.insert("end", f"{row['id']}: {row['content']}")
-        def edit():
-            if not listing.curselection():
-                return
-            row = rows[listing.curselection()[0]]
-            value = simpledialog.askstring("Notu düzenle", "Kömür ne hatırlasın?", initialvalue=row['content'], parent=win)
-            if value and value.strip():
-                try:
-                    self.memory.update_note(row['id'], value)
-                    refresh()
-                except ValueError as error:
-                    messagebox.showerror("Not", str(error), parent=win)
-        def delete():
-            if listing.curselection() and messagebox.askyesno("Notu unut", "Seçilen not silinsin mi?", parent=win):
-                self.memory.forget(rows[listing.curselection()[0]]['id'])
-                refresh()
-        def backup():
-            path = filedialog.asksaveasfilename(parent=win, defaultextension=".sqlite3", filetypes=[("Kömür hafızası", "*.sqlite3")])
-            if path:
-                try:
-                    self.memory.backup(path)
-                    messagebox.showinfo("Yedek", "Notlar, sohbetler ve hatırlatıcılar seçtiğin dosyaya yedeklendi.", parent=win)
-                except (OSError, sqlite3.Error, ValueError) as error:
-                    messagebox.showerror("Yedek", str(error), parent=win)
-        bar = ttk.Frame(win)
-        bar.pack(pady=(0, 10))
-        for text, command in (("Düzenle", edit), ("Unut", delete), ("Hafızayı yedekle", backup)):
-            ttk.Button(bar, text=text, command=command).pack(side="left", padx=4)
-        refresh()
+        if self.listening or self.busy:
+            return
+        self.show()
+        self.toggle_listening()
+
+    def _show_wake_status(self, text):
+        if self.window is not None and self.window.winfo_exists():
+            self.wake_status.configure(text=text)
+
+    def _poll_wake_errors(self):
+        message = ""
+        while True:
+            try:
+                message = self._wake_notices.get_nowait()
+            except queue.Empty:
+                break
+        message = message or (self.voice.wake_error if self.app.settings.get("wake_word", False) else "")
+        if message and message != self._wake_error_shown:
+            self._wake_error_shown = message
+            self.append("Ses", message)
+            self._show_wake_status(message)
 
     def set_history_enabled(self):
-        self.app.settings.set("history_enabled", self.history_enabled.get())
+        return settings_ui.set_history_enabled(self)
 
     def set_activity_enabled(self):
-        enabled = self.context_enabled.get()
-        self.app.settings.set("activity_context", enabled)
-        if enabled:
-            self.context_tainted = True
-        else:
-            self.context_text = "Etkinlik paylaşımı kapalı."
+        return settings_ui.set_activity_enabled(self)
 
     def selected_provider(self):
-        return next((key for key, label in PROVIDER_LABELS.items() if label == self.backend.get()), "local")
+        return settings_ui.selected_provider(self)
 
     def provider_changed(self, *args):
-        local = self.selected_provider() == "local"
-        self.model.set(self.app.settings.get("ai_local_model" if local else "ai_openai_model"))
-        self.api_url.set(self.app.settings.get("ai_local_base_url" if local else "ai_openai_base_url"))
-        self.key_entry.configure(state="disabled" if local else "normal")
-        self.model_entry.configure(state="readonly" if local else "normal")
-        self.url_entry.configure(state="readonly" if local else "normal")
+        return settings_ui.provider_changed(self, *args)
 
     def check_connection(self):
-        if self.save_options():
-            self.status.configure(text="AI bağlantısı deneniyor…")
-            self.submit(self.ai.check_connection, kind="connection")
+        return settings_ui.check_connection(self)
 
     def launch_setup(self):
-        home = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
-        helper = home / "bootstrap_setup.exe"
-        if helper.is_file():
-            command = [str(helper)]
-        elif (home / "bootstrap_setup.py").is_file() and not getattr(sys, "frozen", False):
-            command = [sys.executable, str(home / "bootstrap_setup.py")]
-        else:
-            messagebox.showinfo("Kurulum yardımcısı", "Kömür kurulum paketini yeniden açarak isteğe bağlı AI ve ses modellerini kurabilirsin.", parent=self.window)
-            return
-        subprocess.Popen(command, creationflags=0x08000000 if sys.platform == "win32" else 0)
+        return settings_ui.launch_setup(self)
 
     def append(self, speaker, text):
         self.chat_log.append((speaker, text))
@@ -509,7 +446,7 @@ class AssistantUI:
             return
         self.set_busy(True)
         try:
-            if not messagebox.askyesno("Yerel hafızayı temizle", "Bu bilgisayardaki sohbet geçmişi ve kaydedilmiş notlar silinsin mi? Hatırlatıcılar korunacak.", parent=self.window):
+            if not messagebox.askyesno("Yerel hafızayı temizle", "Bu bilgisayardaki sohbet geçmişi, kaydedilmiş notlar ve öğrenilen alışkanlıklar silinsin mi? Hatırlatıcılar korunacak.", parent=self.window):
                 return
             self.memory.clear_conversation()
             self.ai.reset()
@@ -590,8 +527,38 @@ class AssistantUI:
         if self.window is not None and self.window.winfo_exists():
             self.save_options()
         self.append("Sen", text)
-        self.submit(self.ai.respond, text)
+        command = parse_focus_command(text)
+        if command:
+            self.append("Kömür", self.app.handle_focus_command(command))
+            return True
+        self._stream_id += 1
+        self._partial = ""
+        self.submit(self.respond_streaming, text, self._stream_id)
         return True
+
+    def respond_streaming(self, text, token):
+        """Worker iş parçacığı: parçaları yalnız kuyruğa koyar; Tk'ye tick() dokunur."""
+        return self.ai.respond(text, on_delta=lambda piece: self.delta_events.put((token, piece)))
+
+    def drain_deltas(self):
+        """Ana iş parçacığı: eski/iptal edilmiş isteklerin parçalarını at, geçerlileri baloncuğa yansıt."""
+        changed = False
+        while True:
+            try:
+                token, piece = self.delta_events.get_nowait()
+            except queue.Empty:
+                break
+            if token != self._stream_id or self._cancel_requested or self.closed:
+                continue
+            self._partial = "" if piece is None else (self._partial + piece)[-2000:]
+            changed = True
+        if changed and self.compact is not None:
+            self.compact.set_partial(self._partial)
+
+    def clear_partial(self):
+        self._partial = ""
+        if self.compact is not None:
+            self.compact.set_partial("")
 
     def tick(self, now):
         if self.closed:
@@ -622,10 +589,27 @@ class AssistantUI:
                     next_due = self.memory.complete_reminder(timer["memory_id"])
                     if next_due:
                         self.actions.timers.append({**timer, 'due': now + max(0, next_due - time.time())})
+        self._poll_wake_errors()
+        self.updates.poll(now)
+        status_label = getattr(self, "update_status", None)
+        if status_label is not None and status_label.winfo_exists() and status_label.cget("text") != self.updates.status:
+            status_label.configure(text=self.updates.status)
+        if (now - self._habit_check >= 600 and not self.busy and self.app.brain.state != "sleep"
+                and getattr(getattr(self.app, "activity_reactions", None), "current", None) not in ("gaming", "meeting")):
+            self._habit_check = now
+            try:
+                hint = self.ai.habit_suggestion()
+            except Exception:  # noqa: BLE001
+                logging.debug("habit suggestion failed", exc_info=True)
+                hint = None
+            if hint:
+                self.app.say_unsolicited(hint, 10)
+        self.drain_deltas()
         try:
             kind, result = self.events.get_nowait()
         except queue.Empty:
             return
+        self.clear_partial()
         if kind in ("transcribed", "error"):
             self.listening = False
         if kind == 'confirmed' and self._cancel_requested:
@@ -685,6 +669,11 @@ class AssistantUI:
 
     def close(self):
         self.closed = True
+        self._wake_generation += 1
+        try:
+            self.voice.stop_wake_listener()
+        except Exception:  # noqa: BLE001
+            logging.debug("wake stop failed", exc_info=True)
         if self._listen_stop is not None:
             self._listen_stop.set()
         self.voice.close()

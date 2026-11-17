@@ -3,10 +3,13 @@ Kullanıcı tarafından sağlanan gerçek kedi kayıtları kullanılır.
 """
 from __future__ import annotations
 
+import io
 import logging
 import os
 import sys
 import threading
+
+from acoustic_engine import apply_channel_pan, pitch_shift_wav, random_pitch_factor
 
 try:
     import pygame.mixer
@@ -32,7 +35,7 @@ def _init_mixer():
     if pygame is None or _mixer_initialized:
         return
     try:
-        pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
+        pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
         _mixer_initialized = True
     except Exception:
         logging.exception("pygame.mixer başlatılamadı")
@@ -45,8 +48,16 @@ def _full_path(name):
     return os.path.join(ASSETS_DIR, filename)
 
 
-def play(name="meow", enabled=True, quality="high", volume=70):
-    """Gerçek MP3 kedi sesini oynatır. UI'ı bloklamaz."""
+def play(
+    name="meow",
+    enabled=True,
+    quality="high",
+    volume=70,
+    pan_x=None,
+    screen_w=None,
+    pitch_shift=None,
+):
+    """Gerçek ses dosyasını oynatır. 2D stereo pan ve pitch_shift destekler; UI'ı bloklamaz."""
     if not enabled:
         return
     if name not in SOUND_FILES:
@@ -61,9 +72,20 @@ def play(name="meow", enabled=True, quality="high", volume=70):
 
     def _run():
         try:
-            sound = pygame.mixer.Sound(path)
-            sound.set_volume(max(0, min(100, volume)) / 100.0)
-            sound.play()
+            factor = random_pitch_factor() if pitch_shift == "auto" else pitch_shift
+            if factor is not None and abs(float(factor) - 1.0) > 1e-4:
+                with open(path, "rb") as f:
+                    shifted = pitch_shift_wav(f.read(), float(factor))
+                sound = pygame.mixer.Sound(io.BytesIO(shifted))
+            else:
+                sound = pygame.mixer.Sound(path)
+            master_vol = max(0, min(100, volume)) / 100.0
+            if pan_x is not None:
+                channel = sound.play()
+                apply_channel_pan(channel, pan_x, screen_w or 1920, master_vol)
+            else:
+                sound.set_volume(master_vol)
+                sound.play()
         except Exception:
             logging.exception("Ses oynatma hatası: %s", name)
 

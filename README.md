@@ -1,29 +1,37 @@
 # Kömür — Windows Masaüstü Kedisi ve AI Asistanı
 
-**Onur Can Orhan · Sürüm 1.1.0 · Windows 10/11 x64**
+**Onur Can Orhan · Sürüm 2.1 · Windows 10/11 x64**
 
 Kömür, masaüstünde yaşayan siyah-beyaz bir kediyle Türkçe yardımcıyı bir araya getiren Python uygulamasıdır. Kediyle etkileşime girebilir, yazı veya isteğe bağlı sesle konuşabilir, not ve hatırlatıcı oluşturabilir ve desteklenen bilgisayar işlemlerini başlatabilirsiniz.
 
-## İndir ve kur
+## İndir ve kullan
 
-- [Windows x64 kurulumu](https://github.com/sushikiddo/komur/releases/download/v1.1.0/Komur-Setup-1.1.0-x64.exe)
-- [SHA-256 dosyası](https://github.com/sushikiddo/komur/releases/download/v1.1.0/Komur-Setup-1.1.0-x64.exe.sha256)
-- [Özgün kaynak ZIP](https://github.com/sushikiddo/komur/releases/download/v1.1.0/Komur-Kaynak-v4.zip)
-- [Portfolyo](https://onurcanorhan.pages.dev/index.html)
+- [Kömür 2.1 — Windows EXE](https://github.com/sushikiddo/komur/releases/download/v2.1/Komur.exe)
+- [Kaynak ZIP](https://github.com/sushikiddo/komur/releases/download/v2.1/Komur-Kaynak-v2.1.zip)
+- [SHA-256](https://github.com/sushikiddo/komur/releases/download/v2.1/Komur.exe.sha256)
+- [GitHub Release ve güncelleme notları](https://github.com/sushikiddo/komur/releases/tag/v2.1)
+- [Proje sayfası](https://onurcanorhan.pages.dev/komur.html)
 
-Kurulum dosyası **Desktop.rar içinden çıkarıldı**; boyutu 142.076.675 bayt. Alıcıda Python gerekmez. Kurulum kullanıcı hesabına yapılır, Başlat menüsü kısayolları ve kaldırıcı ekler. Temel yazılı komutlar için AI modeli şart değildir. Yerel sohbet ve ses tanıma modelleri isteğe bağlıdır; ilk indirmeleri internet ve ilave disk alanı gerektirir.
+Komur.exe doğrudan uygulama dosyasıdır (129,6 MB); bu sürümde kurulum sihirbazı sunulmaz. Eski Kömür'ü kapatıp yeni EXE'yi çalıştırın. Önceki sürümlerin kurulum tabanlı güncelleyicisi bu dosyayı otomatik kurmaz. AI ve ses modelleri ayrıca indirilir.
 
-Kurulum kod imzalı değildir; Windows yayımlayıcı/SmartScreen uyarısı gösterebilir. Hash eşleşmesi dosyanın aynı olduğunu gösterir; bağımsız güvenlik denetimi değildir.
+## 2.1 güncelleme notları
 
-~~~powershell
-Get-FileHash ./Komur-Setup-1.1.0-x64.exe -Algorithm SHA256
-~~~
+- Masaüstü fiziği: pencere üzerine tüneme, görev çubuğunda yürüme, kutu ve lazer etkileşimleri ile pati izleri.
+- Yeni animasyonlar: yay tabanlı kuyruk/kulak hareketleri, bakış takibi, büyüme aşamaları, katmanlı kostümler ve retro piksel görünümü.
+- Ses motoru: konuma göre stereo ses, sevme hızına bağlı mırıldanma, değişken miyav tonları ve lo-fi odak ambiyansı.
+- Kişilik ve hafıza: kişilik şablonları, rüya kaydı, dostluk puanı ve seviye sistemi.
+- Günlük yardımcılar: dosya sürükleme sepeti, yapılacak işler için balık görevleri, gizleme tuşu ve sağlık/su hatırlatmaları.
+- Arayüz: yenilenen sağ tık hızlı işlem paneli ve sohbet baloncuğu düzenlemeleri.
 
-Beklenen SHA-256:
+[Doğrulama ve ayrıntılı sürüm notları](distribution/release-notes-2.1.md).
 
-~~~text
-ebcea72b23c45d5e1cb469780f7ecf5b068332b331420b62c24024f00e22a97f
-~~~
+## 1.2'de yenilikler
+
+- **Sakin hareket:** Kedi bir yuvada dinlenir, ekranı dolaşmaz; hareket seviyesi Ayarlar'dan seçilir.
+- **Ekranı anlama:** Video (mısırla izler), müzik (dans), oyun, kodlama, yazı, okuma, toplantı, boşta ve uzakta durumlarına sakin tepkiler. Başlıklar kaydedilmez, ağa gitmez.
+- **AI:** Akıcı (kelime kelime) yanıt, yerel modelde serbest cümleden komut seçimi, tutarlı kişilik, yerel alışkanlık hafızası. Varsayılan Claude modeli claude-sonnet-5-5.
+- **Yeni:** Pomodoro/odak modu, isteğe bağlı "Hey Kömür" (varsayılan kapalı), aksesuarlar, gece/akşam tonu, eklentiler (ör. "zar at").
+- **Güncellemeler:** Günde en fazla bir kez bu deponun son sürümü denetlenir; indirme ve kurulum yalnız onayla, SHA-256 doğrulamalı.
 
 ## Ne işe yarar?
 
@@ -113,9 +121,7 @@ Son betik Inno Setup 6 derleyicisi ve üretilmiş ana EXE gerektirir; lisans top
 
 ## Doğrulama ve sınırlar
 
-Bu yayın hazırlığında 73 Python dosyasının sözdizimi kontrol edildi. Desktop.rar içindeki EXE özeti yanındaki SHA-256 dosyasıyla eşleşti. Bunlar tüm özelliklerin çalıştığının kanıtı değildir.
-
-Paketle gelen [TEST_SONUCLARI-v4.md](TEST_SONUCLARI-v4.md), önceki geliştirme oturumunda 200 testin geçtiğini, bir testin atlandığını ve 46 GUI senaryosunun çalıştığını bildiriyor. Bu sayılar bu yayın hazırlığında yeniden çalıştırılmış sonuçlar değildir. Raporda atıf yapılan JSON ve görsellerin tamamı kaynak ZIP'inde yok.
+1.2.1 için 390 otomatik test geçti (1 atlandı); derlenmiş EXE duman testi ile kurulum/kaldırma denemesi geçti. Bunlar tüm özelliklerin her bilgisayarda çalıştığının kanıtı değildir. Gerçek video oynatırken mısır tepkisi ve gerçek mikrofonla "Hey Kömür" bu yayın hazırlığında elle denenmedi.
 
 Temiz bir alıcı bilgisayarda tüm kurulum ve özellikler bu yayın hazırlığında uçtan uca denenmedi. İstemciyi açmak oyuna giriş veya indirmenin tamamlandığı anlamına gelmez. AI yanlış yanıt verebilir; ekran denetimleri tüm uygulamalarda bulunmaz.
 

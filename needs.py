@@ -26,14 +26,22 @@ class HungryCatBrain(CatBrain):
 
     def _change(self, state, duration=None):
         """Extend CatBrain._change with new cat states."""
-        if state in ("knead", "chirp", "hiss", "sneeze", "purr_idle"):
-            ranges = {
-                "knead": (4.0, 6.0),
-                "chirp": (1.5, 2.5),
-                "hiss": (1.0, 2.0),
-                "sneeze": (0.8, 1.2),
-                "purr_idle": (3.0, 5.0),
-            }
+        ranges = {
+            "knead": (4.0, 6.0),
+            "chirp": (1.5, 2.5),
+            "hiss": (1.0, 2.0),
+            "sneeze": (0.8, 1.2),
+            "purr_idle": (3.0, 5.0),
+            "perch": (5.0, 10.0),
+            "cursor_nap": (8.0, 16.0),
+            "icon_peek": (2.5, 4.5),
+            "icon_slap": (1.0, 2.0),
+            "box_sit": (6.0, 12.0),
+            "laser_chase": (4.0, 8.0),
+            "thermal_bask": (5.0, 10.0),
+            "startle": (0.6, 1.2),
+        }
+        if state in ranges:
             self.state, self.elapsed = state, 0.0
             lo, hi = ranges[state]
             self._duration = duration if duration is not None else self._rng.uniform(lo, hi)
@@ -55,30 +63,26 @@ class HungryCatBrain(CatBrain):
         if name == "feed":
             self.feed()
             return
-        if name == "knead":
+        commands = {
+            "knead": (4.0, "Süpürüyorum…"),
+            "chirp": (2.0, "Mır, mır!"),
+            "hiss": (1.5, "Fıss!"),
+            "sneeze": (1.0, "Hapsışım!"),
+            "purr_idle": (None, "Mırrrrr…"),
+            "perch": (6.0, "Pencere tepesi ne güzel!"),
+            "cursor_nap": (10.0, "İmleç yumuşacıkmış… mır…"),
+            "icon_peek": (3.0, "Simge arkasından bakıyorum!"),
+            "icon_slap": (1.5, "Pati! Bu simge yamuldu mu?"),
+            "box_sit": (8.0, "Kutu buldum, sığdım!"),
+            "laser_chase": (5.0, "Kırmızı nokta! Yakalayacağım!"),
+            "thermal_bask": (6.0, "Sıcacık…"),
+            "startle": (0.8, "Miyav! Korktum!"),
+        }
+        if name in commands:
+            dur, msg = commands[name]
             self._sleep_requested = False
-            self._change("knead", duration=4.0)
-            self.message = "Süpürüyorum…"
-            return
-        if name == "chirp":
-            self._sleep_requested = False
-            self._change("chirp", duration=2.0)
-            self.message = "Mır, mır!"
-            return
-        if name == "hiss":
-            self._sleep_requested = False
-            self._change("hiss", duration=1.5)
-            self.message = "Fıss!"
-            return
-        if name == "sneeze":
-            self._sleep_requested = False
-            self._change("sneeze", duration=1.0)
-            self.message = "Hapsışım!"
-            return
-        if name == "purr_idle":
-            self._sleep_requested = False
-            self._change("purr_idle")
-            self.message = "Mırrrrr…"
+            self._change(name, duration=dur)
+            self.message = msg
             return
         super().command(name)
 

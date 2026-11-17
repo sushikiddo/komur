@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import re
 import subprocess
 import threading
 
@@ -16,10 +17,19 @@ MODEL_SHA256 = "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671
 MODEL_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Komur" / "models" / "faster-whisper-small"
 _MODEL_FILES = ("model.bin", "config.json", "tokenizer.json")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_WAKE_BLOCK = 1600
+_WAKE_RE = re.compile(r"\bkomur\b")
+_TR_FOLD = str.maketrans({"ö": "o", "ü": "u", "ç": "c", "ş": "s", "ğ": "g", "ı": "i"})
 
 
 class VoiceError(RuntimeError):
     """A user-facing voice error."""
+
+
+def is_wake_phrase(text):
+    """True when recognized text contains the wake word 'kömür'. The text is not kept."""
+    folded = str(text).replace("İ", "i").lower().translate(_TR_FOLD)
+    return bool(_WAKE_RE.search(folded))
 
 
 def setup_voice_model(model_dir=MODEL_DIR, progress_callback=None):
@@ -77,15 +87,24 @@ def _turkish_voice_token():
 
 
 class VoiceService:
-    def __init__(self, model_dir=MODEL_DIR, input_device=None, speech_rate=0):
+    def __init__(self, model_dir=MODEL_DIR, input_device=None, speech_rate=0, natural_tts=True):
         self.input_device = input_device
         self.speech_rate = speech_rate
+        self.natural_tts = bool(natural_tts)
+        self._natural_tts = None
         self.model_dir = Path(model_dir)
         self._model = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._closed = False
         self._speech_process = None
+        self._ptt_active = False
+        self._wake_thread = None
+        self._wake_stop = threading.Event()
+        self._wake_resume = threading.Event()
+        self._wake_idle = threading.Event()
+        self._wake_idle.set()
+        self.wake_error = ""
 
     def list_input_devices(self):
         """Return available input devices as stable PortAudio indices and names."""
@@ -126,6 +145,13 @@ class VoiceService:
 
     def record_and_transcribe(self, stop_event, max_seconds=20):
         """Call in a worker only after the user starts recording; stop_event ends capture."""
+        self._pause_wake()
+        try:
+            return self._record_and_transcribe(stop_event, max_seconds)
+        finally:
+            self._resume_wake()
+
+    def _record_and_transcribe(self, stop_event, max_seconds):
         status = self.status()
         if not status["stt_available"]:
             raise VoiceError(status["stt_message"])
@@ -172,8 +198,102 @@ class VoiceService:
         except Exception as exc:
             raise VoiceError(f"Ses kaydı veya konuşma tanıma başarısız: {exc}") from exc
 
-    def speak(self, text):
-        """Start local speech in a background thread; return False if unavailable."""
+    def start_wake_listener(self, on_wake, window_seconds=3.0, hop_seconds=1.0, cooldown_seconds=3.0):
+        """Opt-in 'Hey Kömür' listener. Off unless called. on_wake() runs on the listener thread."""
+        if not callable(on_wake):
+            raise VoiceError("Uyandırma işlevi çağrılabilir olmalı.")
+        status = self.status()
+        if not status.get("stt_available"):
+            raise VoiceError(status.get("stt_message") or "Sesle uyandırma hazır değil.")
+        with self._lock:
+            if self._closed:
+                raise VoiceError("Ses servisi kapatıldı.")
+            thread = self._wake_thread
+            if thread is not None and thread.is_alive() and not self._wake_stop.is_set():
+                return
+            self._wake_stop = threading.Event()
+            self._wake_resume = threading.Event()
+            if not self._ptt_active:
+                self._wake_resume.set()
+            self._wake_idle = threading.Event()
+            self.wake_error = ""
+            self._wake_thread = threading.Thread(
+                target=self._wake_loop,
+                args=(on_wake, window_seconds, hop_seconds, cooldown_seconds),
+                daemon=True)
+            self._wake_thread.start()
+
+    def stop_wake_listener(self):
+        """Stop the wake listener and wait briefly so its microphone is released."""
+        thread = self._wake_thread
+        self._wake_stop.set()
+        self._wake_resume.set()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5)
+            self._wake_thread = None
+
+    def _pause_wake(self):
+        with self._lock:
+            self._ptt_active = True
+            thread = self._wake_thread
+        if thread is not None and thread.is_alive():
+            self._wake_resume.clear()
+            self._wake_idle.wait(5)
+
+    def _resume_wake(self):
+        with self._lock:
+            self._ptt_active = False
+            thread = self._wake_thread
+        if thread is not None and thread.is_alive() and not self._wake_stop.is_set():
+            self._wake_idle.clear()
+            self._wake_resume.set()
+
+    def _wake_loop(self, on_wake, window_seconds, hop_seconds, cooldown_seconds):
+        try:
+            import numpy as np
+            import sounddevice as sd
+            from faster_whisper import WhisperModel
+            if self._model is None:
+                self._model = WhisperModel(str(self.model_dir), device="cpu", compute_type="int8", local_files_only=True)
+            model = self._model
+            window = int(16000 * window_seconds)
+            hop = int(16000 * hop_seconds)
+            options = dict(samplerate=16000, channels=1, dtype="float32", blocksize=_WAKE_BLOCK)
+            if self.input_device is not None:
+                options["device"] = self.input_device
+            while not self._wake_stop.is_set():
+                if not self._wake_resume.is_set():
+                    self._wake_idle.set()
+                    self._wake_resume.wait(0.2)
+                    continue
+                self._wake_idle.clear()
+                with sd.InputStream(**options) as stream:
+                    buffer = np.zeros(0, dtype=np.float32)
+                    pending = 0
+                    while self._wake_resume.is_set() and not self._wake_stop.is_set():
+                        data, _overflow = stream.read(_WAKE_BLOCK)
+                        buffer = np.concatenate((buffer, data.reshape(-1)))[-window:]
+                        pending += _WAKE_BLOCK
+                        if pending < hop or buffer.size < window:
+                            continue
+                        pending = 0
+                        if float(np.max(np.abs(buffer))) < 0.005:
+                            continue
+                        segments, _ = model.transcribe(buffer, language="tr", beam_size=1, vad_filter=True)
+                        if not is_wake_phrase(" ".join(s.text.strip() for s in segments if s.text.strip())):
+                            continue
+                        buffer = np.zeros(0, dtype=np.float32)
+                        try:
+                            on_wake()
+                        except Exception:
+                            self.wake_error = "Uyandırma işlemi hata verdi."
+                        self._wake_stop.wait(cooldown_seconds)
+        except Exception:
+            self.wake_error = "Uyandırma dinleyicisi durdu; mikrofonu ve ses modelini kontrol edin."
+        finally:
+            self._wake_idle.set()
+
+    def _speak_sapi(self, text):
         token = _turkish_voice_token()
         if not str(text).strip() or not token:
             return False
@@ -208,8 +328,38 @@ class VoiceService:
         except OSError:
             return False
 
+    def speak(self, text):
+        """Start local speech in a background thread; return False if unavailable."""
+        clean = str(text).strip()
+        if not clean:
+            return False
+        with self._lock:
+            if self._closed:
+                return False
+        if getattr(self, "natural_tts", True):
+            try:
+                from acoustic_engine import NaturalTurkishTTS
+            except Exception:
+                NaturalTurkishTTS = None
+            if NaturalTurkishTTS is not None:
+                try:
+                    if self._natural_tts is None:
+                        self._natural_tts = NaturalTurkishTTS(
+                            speech_rate=self.speech_rate,
+                            sapi_fallback=self._speak_sapi,
+                        )
+                    return self._natural_tts.speak_sync(clean) is not None
+                except Exception:
+                    pass
+        return self._speak_sapi(clean)
+
     def stop(self):
         """Stop speech playback without cancelling an active recording."""
+        if self._natural_tts is not None:
+            try:
+                self._natural_tts.stop()
+            except Exception:
+                pass
         with self._lock:
             process = self._speech_process
             self._speech_process = None
@@ -221,4 +371,5 @@ class VoiceService:
         with self._lock:
             self._closed = True
             self._stop.set()
+        self.stop_wake_listener()
         self.stop()

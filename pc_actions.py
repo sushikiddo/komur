@@ -424,7 +424,7 @@ class PCActions:
 
     def __init__(self, *, runner=None, popen=None, startfile=None, keybd=None, empty_bin=None,
                  lock=None, on_timer=None, screenshot_dir: Path | None = None, desktop_dir: Path | None = None,
-                 resolver=None, clock=None, riot_launcher=None):
+                 resolver=None, clock=None, riot_launcher=None, plugins: bool = True):
         self.runner = runner or _default_run
         self.popen = popen or _default_popen
         self.startfile = startfile or (os.startfile if IS_WINDOWS else (lambda p: None))
@@ -441,6 +441,16 @@ class PCActions:
         self.timers: list[dict] = []
         self._registry: dict[str, ActionSpec] = {}
         self._register_all()
+        if plugins:
+            self._load_plugins()
+
+    def _load_plugins(self):
+        try:
+            from plugin_loader import load_plugins
+            for spec in load_plugins(self._registry):
+                self.register(spec)
+        except Exception:  # noqa: BLE001 - eklenti sistemi uygulamayı düşürmez
+            log.exception("Eklentiler yüklenemedi")
 
     # -- kayıt ---------------------------------------------------------------
     def register(self, spec: ActionSpec):

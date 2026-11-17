@@ -190,6 +190,65 @@ def _is_fullscreen(hwnd=None) -> bool:
         return False
 
 
+def parse_mic_key_name(name: str) -> str:
+    """Kayıt defteri alt anahtar adından süreç adı: 'C:#Apps#Zoom.exe' -> 'zoom'."""
+    base = (name or "").rsplit("#", 1)[-1].lower()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def mic_in_use_apps() -> set[str]:
+    """Mikrofonu şu an kullanan uygulama adları (Windows gizlilik kayıt defteri; yalnız bellekte)."""
+    if not IS_WINDOWS:
+        return set()
+    apps: set[str] = set()
+    try:
+        import winreg
+        root = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+        for sub in ("", r"\NonPackaged"):
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, root + sub)
+            except OSError:
+                continue
+            with key:
+                i = 0
+                while True:
+                    try:
+                        name = winreg.EnumKey(key, i)
+                    except OSError:
+                        break
+                    i += 1
+                    if name == "NonPackaged":
+                        continue
+                    try:
+                        with winreg.OpenKey(key, name) as k:
+                            start = winreg.QueryValueEx(k, "LastUsedTimeStart")[0]
+                            stop = winreg.QueryValueEx(k, "LastUsedTimeStop")[0]
+                    except OSError:
+                        continue
+                    if start and not stop:
+                        apps.add(parse_mic_key_name(name))
+    except Exception:
+        return set()
+    if apps:
+        # Çöken/zorla kapatılan uygulama kayıtta "kullanıyor" olarak kalabilir: yalnız çalışanları say.
+        running = _running_process_names()
+        if running is not None:
+            apps = {a for a in apps if a in running}
+    return apps
+
+
+def _running_process_names() -> set[str] | None:
+    """Çalışan süreç adları (küçük harf, .exe'siz); okunamazsa None."""
+    import subprocess
+    try:
+        out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=5,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = {line.split('","')[0].strip('"').lower() for line in out.splitlines() if line.strip()}
+    return {n[:-4] if n.endswith(".exe") else n for n in names}
+
+
 def format_duration(seconds: float) -> str:
     seconds = int(seconds)
     h, m = divmod(seconds // 60, 60)

@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
 
-hiddenimports = ['sounds', 'physics_particles', 'effect_orchestrator', 'needs', 'skins', 'settings', 'autostart', 'tray', 'behavior', 'renderer']
+hiddenimports = ['sounds', 'physics_particles', 'effect_orchestrator', 'needs', 'skins', 'settings', 'autostart', 'tray', 'behavior', 'renderer', 'plugin_loader', 'intents', 'ai_backends', 'window_utils', 'companion', 'panel', 'settings_ui', 'awareness', 'focus', 'updater', 'update_ui', 'version', 'desktop_physics', 'procedural_anim', 'acoustic_engine', 'persona_dreams', 'gamification_productivity', 'context_hud']
 hiddenimports += collect_submodules('tkinter')
 hiddenimports += ['faster_whisper', 'sounddevice', 'ctranslate2', 'tokenizers', 'onnxruntime']
 
@@ -10,7 +10,7 @@ a = Analysis(
     ['cat.py'],
     pathex=[],
     binaries=collect_dynamic_libs('ctranslate2'),
-    datas=[('assets', 'assets')] + collect_data_files('faster_whisper'),
+    datas=[('assets', 'assets'), ('plugins', 'plugins')] + collect_data_files('faster_whisper'),
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

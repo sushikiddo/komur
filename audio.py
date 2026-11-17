@@ -14,6 +14,15 @@ import sys
 import threading
 import wave
 
+from acoustic_engine import (
+    generate_lofi_ambience_samples,
+    generate_step_desktop_samples,
+    generate_step_window_samples,
+    pan_volumes,
+    pitch_shift_samples,
+    random_pitch_factor,
+)
+
 try:
     import winsound  # type: ignore
 except Exception:  # pragma: no cover - non-Windows
@@ -24,18 +33,33 @@ _cache = {}
 _lock = threading.Lock()
 
 
-def _wav(samples):
-    """16-bit mono WAV bytes from a list of float samples in [-1, 1]."""
+def _wav(samples, left_vol=None, right_vol=None):
+    """16-bit mono (or stereo when left_vol/right_vol are provided) WAV bytes from float samples in [-1, 1]."""
     buf = io.BytesIO()
+    stereo = left_vol is not None or right_vol is not None
     with wave.open(buf, "wb") as w:
-        w.setnchannels(1)
+        w.setnchannels(2 if stereo else 1)
         w.setsampwidth(2)
         w.setframerate(RATE)
-        w.writeframes(
-            b"".join(
-                struct.pack("<h", int(max(-1, min(1, s)) * 32000)) for s in samples
+        if stereo:
+            lv = 1.0 if left_vol is None else float(left_vol)
+            rv = 1.0 if right_vol is None else float(right_vol)
+            w.writeframes(
+                b"".join(
+                    struct.pack(
+                        "<hh",
+                        int(max(-1.0, min(1.0, s * lv)) * 32000),
+                        int(max(-1.0, min(1.0, s * rv)) * 32000),
+                    )
+                    for s in samples
+                )
             )
-        )
+        else:
+            w.writeframes(
+                b"".join(
+                    struct.pack("<h", int(max(-1, min(1, s)) * 32000)) for s in samples
+                )
+            )
     return buf.getvalue()
 
 
@@ -154,21 +178,33 @@ _MAKERS = {
     "chirp": _chirp,
     "hiss": _hiss,
     "sneeze": _sneeze,
+    "step_window": generate_step_window_samples,
+    "step_desktop": generate_step_desktop_samples,
+    "lofi_ambience": generate_lofi_ambience_samples,
 }
 
 
-def _clip(name):
+def _clip(name, pitch_shift=None, pan_x=None, screen_w=1920):
+    if name not in _MAKERS:
+        return None
+    if pitch_shift is not None or pan_x is not None:
+        samples = _MAKERS[name]()
+        if pitch_shift is not None:
+            factor = random_pitch_factor() if pitch_shift == "auto" else float(pitch_shift)
+            samples = pitch_shift_samples(samples, factor)
+        if pan_x is not None:
+            lv, rv = pan_volumes(pan_x, screen_w or 1920)
+            return _wav(samples, left_vol=lv, right_vol=rv)
+        return _wav(samples)
     with _lock:
         if name not in _cache:
-            if name not in _MAKERS:
-                return None
             _cache[name] = _wav(_MAKERS[name]())
         return _cache[name]
 
 
-def _run(name):
+def _run(name, pitch_shift=None, pan_x=None, screen_w=1920):
     try:
-        clip = _clip(name)
+        clip = _clip(name, pitch_shift=pitch_shift, pan_x=pan_x, screen_w=screen_w)
         if clip is None or winsound is None:
             return
         winsound.PlaySound(clip, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
@@ -176,11 +212,15 @@ def _run(name):
         logging.exception("sound playback failed")
 
 
-def play(name="meow", enabled=True):
-    """Play a named clip without blocking the UI."""
+def play(name="meow", enabled=True, pitch_shift=None, pan_x=None, screen_w=1920):
+    """Play a named clip without blocking the UI, with optional pitch shift and 2D stereo pan."""
     if not (enabled and winsound and name in _MAKERS):
         return
-    threading.Thread(target=_run, args=(name,), daemon=True).start()
+    if name == "meow" and pitch_shift is None:
+        pitch_shift = random.uniform(0.92, 1.08)
+    threading.Thread(
+        target=_run, args=(name, pitch_shift, pan_x, screen_w), daemon=True
+    ).start()
 
 
 def available():
