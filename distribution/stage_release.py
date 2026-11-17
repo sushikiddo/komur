@@ -14,7 +14,7 @@ def digest(path):
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    installer = root / 'dist-installer/Komur-Setup-1.1.0-x64.exe'
+    installer = root / 'dist-installer/Komur-Setup-1.2.0-x64.exe'
     if not installer.is_file():
         raise RuntimeError('Build and verify the installer first.')
     files = [p for p in root.iterdir() if p.is_file() and p.suffix in {'.py', '.spec'}]
@@ -34,7 +34,7 @@ def main():
         shutil.copy2(path, desktop / path.name)
         if digest(path) != digest(desktop / path.name):
             raise RuntimeError('Release copy failed verification: ' + path.name)
-    manifest = {'version': '1.1.0', 'published_online': False,
+    manifest = {'version': '1.2.0', 'published_online': False,
                 'files': [{'name': p.name, 'bytes': p.stat().st_size, 'sha256': digest(p)}
                           for p in (installer, root / 'dist/Komur.exe', archive)]}
     (root / 'release-manifest-v4.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')

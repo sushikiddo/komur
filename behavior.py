@@ -13,10 +13,21 @@ class Bounds:
     bottom: float
 
 
+# Kendiliginden hareket profilleri. "normal" eski davranisa yakindir
+# (tum ekranda gezinme); "sakin" yuvanin etrafinda seyrek ve yavas gezer.
+ACTIVITY_PROFILES = {
+    "sakin": {"radius": 250.0, "speed": 30.0, "wander": 50, "idle": 20.0},
+    "normal": {"radius": None, "speed": 52.0, "wander": 30, "idle": 1.0},
+    "hareketli": {"radius": None, "speed": 70.0, "wander": 40, "idle": 0.7},
+}
+IDLE_STATES = ("sit", "look", "groom")
+HOME_RETURN_DISTANCE = 60.0
+
+
 class CatBrain:
     STATES = ("wander", "sit", "look", "groom", "stretch", "sleep", "yawn", "play", "follow", "bored", "roll")
 
-    def __init__(self, bounds, width=260, height=280, seed=None):
+    def __init__(self, bounds, width=260, height=280, seed=None, activity="sakin"):
         self.width = max(1, width)
         self.height = max(1, height)
         self._rng = random.Random(seed)
@@ -25,6 +36,9 @@ class CatBrain:
         self.y = (self.bounds.top + self.bounds.bottom) / 2
         self.target_x = self.x
         self.target_y = self.y
+        self.home_x, self.home_y = self.x, self.y
+        self.activity = activity if activity in ACTIVITY_PROFILES else "sakin"
+        self._free_roam = False
         self.state = "sit"
         self.elapsed = 0.0
         self.energy = 80.0
@@ -58,10 +72,28 @@ class CatBrain:
         if math.isfinite(x) and math.isfinite(y):
             self.x, self.y = self._clamp(x, y)
             self.target_x, self.target_y = self.x, self.y
+            self.home_x, self.home_y = self.x, self.y
+
+    def set_activity(self, level):
+        if level in ACTIVITY_PROFILES:
+            self.activity = level
+
+    def rest(self):
+        """Dur ve otur (ornegin surukle-birak sonrasi): yeni yuvada dinlen."""
+        self._sleep_requested = False
+        self._change("sit")
+
+    def settle(self, state):
+        """Etkinlik tepkisi: kullanıcının açık komutunu (takip/oyun) bölmeden sakin bir duruma geç."""
+        if state in self.STATES and state not in ("wander", "follow", "play") \
+                and self.state not in ("follow", "play", state):
+            self._sleep_requested = state == "sleep"
+            self._change(state)
 
     def set_bounds(self, bounds):
         self.bounds = self._normalize_bounds(bounds)
         self.x, self.y = self._clamp(self.x, self.y)
+        self.home_x, self.home_y = self._clamp(self.home_x, self.home_y)
         self.target_x, self.target_y = self._clamp(self.target_x, self.target_y)
 
     def _change(self, state, duration=None):
@@ -81,9 +113,26 @@ class CatBrain:
             self._duration = lo
         else:
             self._duration = self._rng.uniform(lo, hi)
+        if state in IDLE_STATES and duration is None:
+            self._duration *= ACTIVITY_PROFILES[self.activity]["idle"]
         if state == "wander":
+            self._pick_wander_target()
+
+    def _pick_wander_target(self):
+        radius = ACTIVITY_PROFILES[self.activity]["radius"]
+        if self._free_roam or radius is None:
             self.target_x = self._rng.uniform(self.bounds.left, self.bounds.right)
             self.target_y = self._rng.uniform(self.bounds.top, self.bounds.bottom)
+            return
+        # kendiliginden gezinme: yuvadan uzaktaysa yuvaya don, degilse yakin bir nokta sec
+        if math.hypot(self.x - self.home_x, self.y - self.home_y) > HOME_RETURN_DISTANCE:
+            tx, ty = self.home_x, self.home_y
+        else:
+            angle = self._rng.uniform(0, 2 * math.pi)
+            dist = self._rng.uniform(radius * 0.4, radius)
+            tx = self.home_x + math.cos(angle) * dist
+            ty = self.home_y + math.sin(angle) * dist * 0.4
+        self.target_x, self.target_y = self._clamp(tx, ty)
 
     def command(self, name):
         name = str(name).lower().strip()
@@ -94,6 +143,7 @@ class CatBrain:
         if name not in frozenset({"resume", "follow", "pet", "wake", "sleep", "play", "wander", "bored", "roll", "yawn"}):
             return
         self.paused = False
+        self._free_roam = False
         if name == "resume":
             self.message = "Devam ediyorum!"
             return
@@ -140,6 +190,7 @@ class CatBrain:
             return
         if name == "wander":
             self._sleep_requested = False
+            self._free_roam = True  # acik komut: tum ekranda gezinebilir
             self._change("wander")
             self.message = "Biraz dolaşayım."
             return
@@ -227,8 +278,10 @@ class CatBrain:
             self._idle_seconds = 0.0
             self._change(self._rng.choices(("bored", "roll"), weights=(3, 2), k=1)[0])
             return
+        self._free_roam = False
         choices = ["wander", "sit", "look", "groom", "stretch", "play"]
-        weights = [30, 23, 15, 13, 8, (11 if self.happiness < 65 else 5)]
+        weights = [ACTIVITY_PROFILES[self.activity]["wander"], 23, 15, 13, 8,
+                   (11 if self.happiness < 65 else 5)]
         if self.energy < 35:
             choices.append("yawn")
             weights.append(30)
@@ -261,7 +314,8 @@ class CatBrain:
         self.energy = max(0.0, min(100.0, self.energy))
         self.happiness = max(0.0, min(100.0, self.happiness))
         if self.state == "wander":
-            remaining = self._move_towards(self.target_x, self.target_y, 52, dt)
+            speed = 52 if self._free_roam else ACTIVITY_PROFILES[self.activity]["speed"]
+            remaining = self._move_towards(self.target_x, self.target_y, speed, dt)
             if remaining <= 2:
                 self._change("sit")
         elif self.state == "follow":

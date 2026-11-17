@@ -60,6 +60,17 @@ class CatRenderer:
     TAG = "cat_renderer"
     GROUND = 262.0
     LOW_LIGHT_HOURS = frozenset((21, 22, 23, 0, 1, 2, 3, 4, 5, 6))
+    accessory = None       # None | "bow" | "scarf" | "hat" | "glasses"
+    time_of_day = "day"    # "day" | "evening" | "night"
+    _dance_tilt = 0.0
+    ACCESSORIES = (None, "bow", "scarf", "hat", "glasses")
+    TIMES_OF_DAY = ("day", "evening", "night")
+    ACC_RED = "#c23b3b"
+    ACC_RED_DARK = "#7e1f26"
+    ACC_METAL = "#d5dbe0"
+    CORN_BUCKET = "#f6e4c5"
+    CORN_STRIPE = "#db6656"
+    CORN_KERNEL = "#fff2bd"
 
     def __init__(self, canvas, width=260, height=280):
         self.canvas = canvas
@@ -126,6 +137,10 @@ class CatRenderer:
             a, b, c, d, fill=fill, outline=outline,
             width=self._w(width), tags=self.TAG, **kw,
         )
+
+    def _ellipse(self, center, rx, ry, fill, outline="", width=1):
+        cx, cy = center
+        return self._oval(cx - rx, cy - ry, cx + rx, cy + ry, fill, outline, width)
 
     def _poly(self, points, fill, outline="", width=1, smooth=False, **kw):
         if points and isinstance(points[0], tuple):
@@ -227,6 +242,7 @@ class CatRenderer:
         """Draw the head centred at (cx, cy). ``tilt`` is degrees (clockwise).
         eyes: open | closed | squeezed.  mouth: closed | yawn | hiss | chirp |
         groom | sneeze.  ears: up | back | flat | droop."""
+        tilt += self._dance_tilt
         rad = math.radians(tilt)
         cos_a, sin_a = math.cos(rad), math.sin(rad)
 
@@ -355,6 +371,46 @@ class CatRenderer:
                 root = (s * 12, 19)
                 for (mx, my, tx, ty) in ((34, 11, 54, 5), (36, 18, 58, 17), (34, 24, 54, 30)):
                     self._line(shape([root, (s * mx, my), (s * tx, ty)]), self.WHITE, 1.1)
+
+        self._accessory(shape, size)
+
+    def _accessory(self, shape, size=1.0):
+        """Draw the chosen accessory in head-local coordinates (``shape`` maps
+        them through the head's position, size and tilt), so it follows the head
+        in every pose. Chin is at y~42, eyes at (+-19, -4), crown at y~-40."""
+        kind = self.accessory
+        if kind == "bow":
+            red, dark = self.ACC_RED, self.ACC_RED_DARK
+            self._poly(shape([(0, 50), (-20, 41), (-20, 59)]), red, dark, 1, smooth=False)
+            self._poly(shape([(0, 50), (20, 41), (20, 59)]), red, dark, 1, smooth=False)
+            self._poly(shape([(-5, 44), (5, 44), (5, 56), (-5, 56)]), dark, "", 1, smooth=True)
+        elif kind == "scarf":
+            red, dark = self.ACC_RED, self.ACC_RED_DARK
+            self._poly(shape([(-34, 33), (-18, 43), (0, 46), (18, 43), (34, 33), (36, 45),
+                              (18, 56), (0, 59), (-18, 56), (-36, 45)]),
+                       red, dark, 1, smooth=True)
+            self._line(shape([(-26, 42), (-22, 52)]), self.WHITE, 2)
+            self._line(shape([(-8, 47), (-6, 57)]), self.WHITE, 2)
+            self._line(shape([(10, 47), (8, 57)]), self.WHITE, 2)
+            self._line(shape([(26, 42), (22, 52)]), self.WHITE, 2)
+            self._poly(shape([(14, 52), (28, 50), (30, 74), (18, 76)]), red, dark, 1)
+        elif kind == "hat":
+            self._poly(shape([(-14, -42), (-12, -62), (-2, -68), (10, -64), (14, -42)]),
+                       self.ACC_RED, self.ACC_RED_DARK, 1, smooth=True)
+            self._poly(shape([(-13, -47), (13, -47), (14, -42), (-14, -42)]),
+                       self.GOLD, "", 1)
+            self._ellipse(shape([(0, -41)])[0], 22 * size, 5 * size,
+                          self.ACC_RED_DARK, self.INK, 1)
+        elif kind == "glasses":
+            for s in (-1, 1):
+                x0, y0 = s * 19, -4
+                self._ellipse(shape([(x0, y0)])[0], 13 * size, 12 * size,
+                              "", self.ACC_METAL, 2)
+                self._line(shape([(x0 - s * 6, y0 - 8), (x0 - s * 11, y0 - 3)]),
+                           self.WHITE, 1)
+            self._line(shape([(-6, -6), (0, -9), (6, -6)]), self.ACC_METAL, 2)
+            for s in (-1, 1):
+                self._line(shape([(s * 33, -6), (s * 45, -10)]), self.ACC_METAL, 1.6)
 
     # -- awake-state helpers ------------------------------------------------
     def _blinking(self, t, offset=0.0):
@@ -736,9 +792,74 @@ class CatRenderer:
         self.canvas.tag_lower(box, item)
         self.item_count += 2
 
+    # -- popcorn tub (video reaction) -----------------------------------------
+    def _kernel(self, x, y, r=4):
+        self._oval(x - r, y - r, x + r, y + r, self.CORN_KERNEL, "#ddc887", 1)
+
+    def _popcorn_lap(self, t):
+        """Striped tub held in front of a sitting cat, both paws on the rim."""
+        self._poly([(98, 218), (140, 218), (135, 258), (103, 258)],
+                   self.CORN_BUCKET, "#9c5247", 1.4)
+        for x in (108, 119, 130):
+            self._line([(x, 222), (x, 254)], self.CORN_STRIPE, 3)
+        for x, y in ((100, 217), (108, 212), (117, 215), (126, 211), (135, 215), (141, 218),
+                     (113, 209), (122, 207)):
+            self._kernel(x, y)
+        # popping kernel
+        p = (t * 1.3) % 1.0
+        self._kernel(120 + 14 * math.sin(p * 5), 208 - 38 * math.sin(p * math.pi), 3.5)
+        # paws on the rim
+        self._sock(102, 220, 11, 7, toes=False)
+        self._sock(138, 220, 11, 7, toes=False)
+
+    def _popcorn_side(self):
+        self._poly([(184, 208), (225, 208), (219, 253), (190, 253)],
+                   self.CORN_BUCKET, "#9c5247")
+        for x in (194, 205, 216):
+            self._line([(x, 212), (x, 248)], self.CORN_STRIPE, width=3)
+        for x, y in ((191, 207), (200, 202), (209, 206), (218, 202), (224, 208)):
+            self._kernel(x, y)
+
     # -- frame --------------------------------------------------------------
+    _TOD_TINT = {"evening": ("#ff9a52", 0.07), "night": ("#1c2c64", 0.10)}
+    _TOD_KEYS = ("FUR", "FUR_LIGHT", "FUR_EDGE", "WHITE", "WHITE_SHADE", "GOLD_LIGHT")
+
     def draw(self, brain, animation_time, message="", effect_orchestrator=None,
-             draw_bubble=False):
+             draw_bubble=False, accessory=None, time_of_day=None):
+        """Public entry. ``accessory`` / ``time_of_day`` override the renderer
+        attributes of the same name for this frame (None = use attribute)."""
+        tod = time_of_day if time_of_day is not None else self.time_of_day
+        saved = {}
+        tint = self._TOD_TINT.get(tod)
+        if tint:
+            for key in self._TOD_KEYS:
+                saved[key] = self.__dict__.get(key, None)
+                base = getattr(self, key)
+                if key == "GOLD_LIGHT":
+                    new = blend(base, "#ffffff", 0.35) if tod == "night" else base
+                elif key == "WHITE":
+                    new = blend(base, tint[0], tint[1] * 0.7)
+                else:
+                    new = blend(base, tint[0], tint[1])
+                setattr(self, key, new)
+        prev_acc = self.__dict__.get('accessory', None)
+        if accessory is not None:
+            self.accessory = accessory
+        try:
+            self._draw(brain, animation_time, message, effect_orchestrator, draw_bubble)
+        finally:
+            if prev_acc is None:
+                self.__dict__.pop('accessory', None)
+            else:
+                self.accessory = prev_acc
+            for key, old in saved.items():
+                if old is None:
+                    self.__dict__.pop(key, None)
+                else:
+                    setattr(self, key, old)
+
+    def _draw(self, brain, animation_time, message="", effect_orchestrator=None,
+              draw_bubble=False):
         """Render one frame from a brain with state, elapsed and facing fields.
 
         ``message`` is accepted for backward compatibility but no longer drawn
@@ -778,6 +899,9 @@ class CatRenderer:
             self.dx = self.idle_sway
 
         reaction = getattr(brain, "activity_reaction", "none")
+        self._dance_tilt = 0.0
+        if reaction == "music" and state not in ("sleep", "play", "hiss") and not getattr(brain, "paused", False):
+            self._dance_tilt = math.sin(t * 2.5) * 7
         if reaction == "music" and state not in ("sleep", "play", "hiss") and not getattr(brain, "paused", False):
             self.dx += math.sin(t * 5.0) * 7
             self.dy = abs(math.sin(t * 5.0)) * -5
@@ -796,15 +920,17 @@ class CatRenderer:
         else:
             self._sit(t, state, brain, pupil)
 
+        cat_flip = self.flip
         self.dx = self.dy = 0.0
         self.flip = False
+        self._dance_tilt = 0.0
         if reaction == "video" and state not in ("sleep", "play", "hiss"):
-            # A little striped popcorn tub and kernels, drawn beside the cat.
-            self._poly([(184, 208), (225, 208), (219, 253), (190, 253)], "#f6e4c5", "#9c5247")
-            for x in (194, 205, 216):
-                self._line([(x, 212), (x, 248)], "#db6656", width=3)
-            for x, y in ((191, 207), (200, 202), (209, 206), (218, 202), (224, 208)):
-                self._oval(x-4, y-4, x+4, y+4, "#fff2bd", "#ddc887")
+            if state in ("wander", "follow", "stretch", "roll"):
+                self._popcorn_side()
+            else:
+                self.flip = cat_flip
+                self._popcorn_lap(t)
+                self.flip = False
         if ball is not None:
             self._ball(brain, t, ball)
 

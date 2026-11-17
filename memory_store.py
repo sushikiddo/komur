@@ -35,7 +35,11 @@ class MemoryStore:
             columns = {row['name'] for row in db.execute('PRAGMA table_info(reminders)')}
             if 'repeat_seconds' not in columns:
                 db.execute('ALTER TABLE reminders ADD COLUMN repeat_seconds REAL NOT NULL DEFAULT 0')
-            db.execute('PRAGMA user_version=2')
+            # Alışkanlıklar: yalnız eylem anahtarı + saat + sayaç (+ gün, aynı gün tekrarını saymamak için). Serbest metin yok.
+            db.execute("""CREATE TABLE IF NOT EXISTS habits (
+                action TEXT NOT NULL, hour INTEGER NOT NULL, count INTEGER NOT NULL DEFAULT 0,
+                last_day INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(action, hour))""")
+            db.execute('PRAGMA user_version=3')
 
     @contextmanager
     def connection(self):
@@ -152,10 +156,44 @@ class MemoryStore:
         with self.connection() as db:
             db.execute("UPDATE reminders SET completed=1 WHERE completed=0")
 
+    # -- alışkanlık hafızası ---------------------------------------------------
+    def record_habit(self, action, hour, day):
+        """Bir eylemin (katalog anahtarı, ör. 'lol') saat dilimindeki sayacını artırır; aynı gün bir kez sayılır.
+        ``day``: ``date.toordinal()``. Geçersiz eylem adı reddedilir (serbest metin saklanmaz)."""
+        action = str(action)
+        hour, day = int(hour), int(day)
+        if not re.fullmatch(r"[a-z0-9_]{1,32}", action) or not 0 <= hour <= 23:
+            raise ValueError("Geçersiz alışkanlık kaydı")
+        with self.connection() as db:
+            row = db.execute("SELECT last_day FROM habits WHERE action=? AND hour=?", (action, hour)).fetchone()
+            if row is None:
+                db.execute("INSERT INTO habits(action,hour,count,last_day) VALUES(?,?,1,?)", (action, hour, day))
+            elif row["last_day"] == day:
+                return False
+            else:
+                db.execute("UPDATE habits SET count=count+1,last_day=? WHERE action=? AND hour=?", (day, action, hour))
+        return True
+
+    def top_habit(self, hour, min_count=3):
+        """Bu saatte en az ``min_count`` farklı günde yapılmış en sık eylem: (eylem, sayaç, son gün) ya da None."""
+        with self.connection() as db:
+            row = db.execute("SELECT action,count,last_day FROM habits WHERE hour=? AND count>=? "
+                             "ORDER BY count DESC, action LIMIT 1", (int(hour), int(min_count))).fetchone()
+        return (row["action"], row["count"], row["last_day"]) if row else None
+
+    def habits(self):
+        with self.connection() as db:
+            return [dict(row) for row in db.execute("SELECT action,hour,count FROM habits ORDER BY count DESC, action, hour")]
+
+    def clear_habits(self):
+        with self.connection() as db:
+            db.execute("DELETE FROM habits")
+
     def clear_conversation(self):
         with self.connection() as db:
             db.execute("DELETE FROM messages")
             db.execute("DELETE FROM notes")
+            db.execute("DELETE FROM habits")
         with self.connection() as db:
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             db.execute("VACUUM")

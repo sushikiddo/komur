@@ -15,7 +15,7 @@ FILE_NAME = "settings.json"
 DEFAULTS = {
     "ai_enabled": True,
     "ai_backend": "local",
-    "ai_model": "claude-sonnet-4-5",
+    "ai_model": "claude-sonnet-5-5",
     "ai_cli_model": "",
     "ai_api_key": "",
     "ai_openai_model": "gpt-4o-mini",
@@ -37,6 +37,7 @@ DEFAULTS = {
     "sound": True,              # meow/purr sound effects
     "needs": True,              # hunger/needs system enabled
     "autostart": False,         # launch with Windows (mirrors the registry)
+    "activity_level": "sakin",  # kendiliginden hareket: sakin | normal | hareketli
     "friends": 0,               # number of companion cats (0..3)
     "x": None,                  # last window position (screen px); None = default
     "y": None,
@@ -49,6 +50,13 @@ DEFAULTS = {
     "speech_interval": 3600,      # otomatik konuşma: kapalı (sadece etkileşim)
     "speech_on_wander": False,    # gezirken otomatik konuşma kapalı
     "greeting_on_start": True,    # program açılışında selamla
+    "accessory": None,            # None | bow | scarf | hat | glasses
+    "day_night": True,            # saate göre gece/akşam tonu
+    "wake_word": False,           # "Hey Kömür" dinleme (mikrofon) — varsayılan kapalı
+    "user_plugins_enabled": False,  # %LOCALAPPDATA%\Komur\plugins yüklensin mi
+    "habit_memory": True,         # alışkanlık sayacı + tek seferlik öneriler
+    "update_check": True,         # günde en fazla bir kez GitHub'da yeni sürüm denetle (kurulum onaylı)
+    "update_last_check": None,    # son denetim (time.time)
 }
 
 SIZE_SCALES = {"small": 0.55, "normal": 1.0, "large": 1.3, "xlarge": 1.6}

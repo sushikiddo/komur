@@ -65,6 +65,7 @@ class ChatBubble:
         self.send_button.pack(side="right")
         self.window.bind("<Escape>", lambda event: self.hide())
         self._visible = False
+        self.partial = ""
 
     @property
     def visible(self):
@@ -113,10 +114,21 @@ class ChatBubble:
         recent = self.assistant.chat_log[-4:]
         for speaker, text in recent:
             self.messages.insert("end", f"{speaker}: {text}\n")
-        if not recent:
+        if self.partial:
+            self.messages.insert("end", f"Kömür: {self.partial}")
+        elif not recent:
             self.messages.insert("end", "Buradayım. Yazabilir veya Konuş'a basabilirsin.")
         self.messages.configure(state="disabled")
         self.messages.see("end")
+
+    def set_partial(self, text):
+        """Akan (henüz kesinleşmemiş) yanıt; kalıcı sohbet kaydına yazılmaz."""
+        text = str(text or "")
+        if text == self.partial:
+            return
+        self.partial = text
+        if self.visible:
+            self.refresh()
 
     def set_busy(self, busy):
         self.send_button.configure(state="disabled" if busy else "normal")

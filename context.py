@@ -190,6 +190,48 @@ def _is_fullscreen(hwnd=None) -> bool:
         return False
 
 
+def parse_mic_key_name(name: str) -> str:
+    """Kayıt defteri alt anahtar adından süreç adı: 'C:#Apps#Zoom.exe' -> 'zoom'."""
+    base = (name or "").rsplit("#", 1)[-1].lower()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def mic_in_use_apps() -> set[str]:
+    """Mikrofonu şu an kullanan uygulama adları (Windows gizlilik kayıt defteri; yalnız bellekte)."""
+    if not IS_WINDOWS:
+        return set()
+    apps: set[str] = set()
+    try:
+        import winreg
+        root = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+        for sub in ("", r"\NonPackaged"):
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, root + sub)
+            except OSError:
+                continue
+            with key:
+                i = 0
+                while True:
+                    try:
+                        name = winreg.EnumKey(key, i)
+                    except OSError:
+                        break
+                    i += 1
+                    if name == "NonPackaged":
+                        continue
+                    try:
+                        with winreg.OpenKey(key, name) as k:
+                            start = winreg.QueryValueEx(k, "LastUsedTimeStart")[0]
+                            stop = winreg.QueryValueEx(k, "LastUsedTimeStop")[0]
+                    except OSError:
+                        continue
+                    if start and not stop:
+                        apps.add(parse_mic_key_name(name))
+    except Exception:
+        return set()
+    return apps
+
+
 def format_duration(seconds: float) -> str:
     seconds = int(seconds)
     h, m = divmod(seconds // 60, 60)

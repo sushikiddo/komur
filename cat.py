@@ -29,6 +29,7 @@ from tkinter import ttk, messagebox
 
 from behavior import Bounds
 from needs import HungryCatBrain
+from focus import FocusSession, MESSAGES, phase_to_cat_state
 from renderer import CatRenderer
 import autostart
 import skins
@@ -40,15 +41,15 @@ from tray import Tray
 from bubble import SpeechBubble
 from assistant_ui import AssistantUI
 from activity_reactions import ActivityReactions
+from companion import Companion
+from panel import TITLE, show_panel as _show_panel
+from window_utils import (BG, HEIGHT, IS_WINDOWS, WIDTH, enable_dpi_awareness, make_transparent, monitor_bounds,
+                          movement_bounds, place_window, pointer_position)
 
 import subprocess
 import ctypes
 from ctypes import wintypes
 
-WIDTH, HEIGHT = 260, 280          # logical base size; scaled by the size setting
-BG = "#ff00ff"                    # transparent color key
-TITLE = "Kömür — Kontrol paneli"
-IS_WINDOWS = sys.platform == "win32"
 
 STATE_LABELS = {
     "wander": "Geziniyor", "sit": "Oturuyor", "look": "Etrafı izliyor",
@@ -164,133 +165,6 @@ def setup_logging():
         logging.basicConfig(level=logging.INFO)
 
 
-def enable_dpi_awareness():
-    if not IS_WINDOWS:
-        return
-    try:
-        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-    except (AttributeError, OSError):
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        except (AttributeError, OSError):
-            pass
-
-
-def monitor_bounds(root):
-    """Each monitor's usable work area, including monitors left of the primary."""
-    if IS_WINDOWS:
-        class MonitorInfo(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
-                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD),
-            ]
-
-        areas = []
-        ctypes.windll.user32.GetMonitorInfoW.argtypes = [
-            wintypes.HMONITOR, ctypes.POINTER(MonitorInfo)
-        ]
-        callback_type = ctypes.WINFUNCTYPE(
-            wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
-            ctypes.POINTER(wintypes.RECT), wintypes.LPARAM,
-        )
-
-        def collect(handle, dc, rect, data):
-            info = MonitorInfo()
-            info.cbSize = ctypes.sizeof(info)
-            if ctypes.windll.user32.GetMonitorInfoW(handle, ctypes.byref(info)):
-                r = info.rcWork
-                areas.append(Bounds(r.left, r.top, r.right, r.bottom))
-            return True
-
-        callback = callback_type(collect)
-        ctypes.windll.user32.EnumDisplayMonitors(None, None, callback, 0)
-        if areas:
-            return areas
-    return [Bounds(0, 0, root.winfo_screenwidth(), root.winfo_screenheight())]
-
-
-def pointer_position(root):
-    if IS_WINDOWS:
-        point = wintypes.POINT()
-        if ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
-            return (point.x, point.y)
-    return root.winfo_pointerxy()
-
-
-def make_transparent(window):
-    """Apply the borderless, topmost, color-keyed transparency to a window."""
-    window.configure(bg=BG)
-    window.overrideredirect(True)
-    window.attributes("-topmost", True)
-    if IS_WINDOWS:
-        window.wm_attributes("-transparentcolor", BG)
-
-
-def place_window(window, x, y, w, h):
-    """Move a window to screen pixel (x, y). Uses SetWindowPos on Windows so an
-    overrideredirect window honors the request, with a geometry fallback."""
-    x, y = round(x), round(y)
-    if IS_WINDOWS:
-        try:
-            user32 = ctypes.windll.user32
-            user32.GetParent.argtypes = [wintypes.HWND]
-            user32.GetParent.restype = wintypes.HWND
-            user32.SetWindowPos.argtypes = [
-                wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-                ctypes.c_int, ctypes.c_int, wintypes.UINT,
-            ]
-            hwnd = user32.GetParent(window.winfo_id()) or window.winfo_id()
-            user32.SetWindowPos(hwnd, None, x, y, w, h, 20)  # NOSIZE off: set both
-            return
-        except OSError:
-            pass
-    window.geometry(f"{w}x{h}+{x}+{y}")
-
-
-class Companion:
-    """A second (or third…) cat in its own transparent window, driven by the
-    main loop. Lighter than the primary cat: no panel, menu or hotkey."""
-
-    def __init__(self, root, area, scale, skin, needs):
-        self.w = round(WIDTH * scale)
-        self.h = round(HEIGHT * scale)
-        self.window = tk.Toplevel(root)
-        make_transparent(self.window)
-        self.canvas = tk.Canvas(self.window, width=self.w, height=self.h,
-                                bg=BG, highlightthickness=0, borderwidth=0)
-        self.canvas.pack()
-        self.brain = HungryCatBrain(DesktopCat._movement_bounds(area, self.w, self.h),
-                                    width=self.w, height=self.h, needs=needs)
-        self.brain.move_to(area.left + 40, area.bottom - self.h - 20)
-        self.renderer = skins.apply_skin(CatRenderer(self.canvas, self.w, self.h), skin)
-        self.animation_time = 0.0
-        self.window.geometry(f"{self.w}x{self.h}+0+0")
-        self.window.update_idletasks()
-        self._apply_position()
-
-    def _apply_position(self):
-        place_window(self.window, self.brain.x, self.brain.y, self.w, self.h)
-
-    def set_opacity(self, value):
-        try:
-            self.window.attributes("-alpha", max(0.1, min(1.0, value / 100)))
-        except tk.TclError:
-            pass
-
-    def step(self, dt, pointer):
-        if not self.brain.paused:
-            self.brain.step(dt, pointer)
-            self.animation_time += dt
-        self._apply_position()
-        self.renderer.draw(self.brain, self.animation_time, "")
-
-    def destroy(self):
-        try:
-            self.window.destroy()
-        except tk.TclError:
-            pass
-
-
 class DesktopCat:
     def __init__(self, root=None, options=None):
         self.options = options
@@ -316,6 +190,7 @@ class DesktopCat:
         self.brain = HungryCatBrain(
             self._movement_bounds(area, self.w, self.h),
             width=self.w, height=self.h, needs=self.settings.get("needs"),
+            activity=self.settings.get("activity_level"),
         )
         # restore last position, else bottom-right of the current monitor
         if self.settings.get("x") is not None and self.settings.get("y") is not None:
@@ -398,6 +273,9 @@ class DesktopCat:
         self.assistant = AssistantUI(self)
         self._bubble_message = None
         self.activity_reactions = ActivityReactions()
+        self._still_reaction = False
+        self.focus = FocusSession()
+        self._tod, self._tod_checked = "day", float("-inf")
         self._chat_anchor = None
         self._manual_reaction = None
         self._manual_reaction_until = 0.0
@@ -415,6 +293,7 @@ class DesktopCat:
         ):
             self.menu.add_command(label=label, command=lambda name=command: self.command(name))
         self.menu.add_separator()
+        self.menu.add_command(label="Pomodoro başlat / bitir", command=self.toggle_focus)
         self.menu.add_command(label="Duraklat / Devam et", command=self.toggle_pause)
         self.menu.add_command(label="Diğer ekrana geç", command=self.next_monitor)
         self.menu.add_command(label="Kömür ile konuş", command=self._on_speak_click)
@@ -453,9 +332,52 @@ class DesktopCat:
         logging.error("Tk callback failed", exc_info=(error_type, error, traceback))
         self.say("Bir sorun oluştu. Kontrol panelini açabilirsin.", 8)
 
+    def start_focus(self, work_min=25, break_min=5):
+        self.focus.start(work_min, break_min, now=time.monotonic())
+
+    def stop_focus(self):
+        self.focus.stop()
+
+    def toggle_focus(self):
+        if self.focus.phase == "idle":
+            self.start_focus()
+        else:
+            self.stop_focus()
+            self.say("Pomodoro bitirildi.", 6)
+
+    def handle_focus_command(self, command):
+        """Sohbetten gelen ayrıştırılmış odak komutunu uygular; sohbete yazılacak kısa yanıtı döner."""
+        if command["action"] == "stop":
+            if self.focus.phase == "idle":
+                return "Şu an açık bir pomodoro yok."
+            self.stop_focus()
+            return "Pomodoro bitirildi."
+        self.start_focus(command["work_min"], command["break_min"])
+        return f"Pomodoro başladı: {command['work_min']} dk odak, {command['break_min']} dk mola. Ben sessizce uyurum."
+
+    def _tick_focus(self, now):
+        events = self.focus.tick(now)
+        for event in events:
+            self.say(MESSAGES[event], 8)
+        if events:
+            state = phase_to_cat_state(self.focus.phase)
+            if state:
+                self.brain.settle(state)
+
     def say(self, text, seconds):
         self.message = text
         self.message_until = time.monotonic() + seconds
+
+    UNSOLICITED_GAP = 900.0   # kendiliğinden konuşma (etkinlik/alışkanlık) en fazla 15 dk'da bir
+
+    def say_unsolicited(self, text, seconds):
+        """Kullanıcı istemeden konuşma: tek bir genel sınırla seyrek tutulur. Söylendiyse True."""
+        now = time.monotonic()
+        if now - getattr(self, "_last_unsolicited", float("-inf")) < self.UNSOLICITED_GAP:
+            return False
+        self._last_unsolicited = now
+        self.say(text, seconds)
+        return True
 
     def _init_speech(self):
         """Konuşma baloncuğu sistemini başlatır."""
@@ -549,7 +471,7 @@ class DesktopCat:
             return
         self.drag_origin = None
         if self.dragged:
-            self.command("wander")
+            self.brain.rest()  # birakilan yer yeni yuva (move_to ayarladi)
             self.say("Burayı sevdim!", 5)
             return
         # Tek tık (sürükle değil): kedile konuşma penceresi aç
@@ -619,214 +541,16 @@ class DesktopCat:
         for _ in range(count):
             try:
                 mate = Companion(self.root, area, self.settings.scale,
-                                 self.settings.get("skin"), self.settings.get("needs"))
+                                 self.settings.get("skin"), self.settings.get("needs"),
+                                 self.settings.get("activity_level"))
                 mate.set_opacity(self.settings.get("opacity"))
-                mate.brain.command("wander")
                 self.companions.append(mate)
             except tk.TclError:
                 break
 
-    # -- panel ------------------------------------------------------------
+    # -- panel (panel.py) -------------------------------------------------
     def show_panel(self):
-        if self.panel is not None and self.panel.winfo_exists():
-            self.panel.deiconify()
-            self.panel.lift()
-            self.panel.focus_force()
-            return
-        self.panel = tk.Toplevel(self.root)
-        self.panel.title(TITLE)
-        self.panel.resizable(False, False)
-        self.panel.attributes("-topmost", True)
-        nb = ttk.Notebook(self.panel)
-        nb.pack(fill="both", expand=True, padx=2, pady=2)
-        self._build_actions_tab(nb)
-        self._build_look_tab(nb)
-        self._build_system_tab(nb)
-        self.panel.protocol("WM_DELETE_WINDOW", self.panel.withdraw)
-        self._refresh_status()
-
-    def _build_actions_tab(self, nb):
-        content = ttk.Frame(nb, padding=18)
-        nb.add(content, text="Davranış")
-        ttk.Label(content, text=self.settings.get("name"),
-                  font=("Segoe UI", 22, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(content, text="Masaüstündeki küçük dostun",
-                  font=("Segoe UI", 10)).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
-        ttk.Label(content, textvariable=self.status_var).grid(
-            row=2, column=0, columnspan=2, pady=(0, 12))
-        buttons = [
-            ("♥ Sev", "pet"), ("Mama ver", "feed"), ("Topla oyna", "play"),
-            ("Süpür", "knead"), ("Kuş sesi", "chirp"), ("Fıss", "hiss"),
-            ("Hapsıyor", "sneeze"),
-            ("Fareyi takip et", "follow"), ("Gezin / Bırak", "wander"),
-            ("Uyu", "sleep"), ("Uyan", "wake"),
-            ("Yerde yuvarlan", "roll"), ("Esne", "yawn"), ("Sıkıl", "bored"),
-        ]
-        for index, (label, name) in enumerate(buttons):
-            ttk.Button(content, text=label, width=20,
-                       command=lambda n=name: self.command(n)).grid(
-                row=3 + index // 2, column=index % 2, padx=4, pady=4, sticky="ew")
-        row = 3 + (len(buttons) + 1) // 2
-        ttk.Button(content, text="Duraklat / Devam et", command=self.toggle_pause).grid(
-            row=row, column=0, padx=4, pady=4, sticky="ew")
-        ttk.Button(content, text="Diğer ekrana geç", command=self.next_monitor).grid(
-            row=row, column=1, padx=4, pady=4, sticky="ew")
-        shortcut = ("Ctrl + Shift + K: paneli aç" if self.hotkey_id
-                    else "Sağ tık veya çift tık: paneli aç")
-        ttk.Label(content, text="Tıkla: sev  •  Sürükle: taşı\n" + shortcut +
-                  "\nTakip açıkken Gezin ile durdurabilirsin.",
-                  justify="left").grid(row=row + 1, column=0, columnspan=2, sticky="w", pady=14)
-
-    def _build_look_tab(self, nb):
-        content = ttk.Frame(nb, padding=18)
-        nb.add(content, text="Görünüm")
-        ttk.Label(content, text="İsim").grid(row=0, column=0, sticky="w", pady=4)
-        name_entry = ttk.Entry(content, textvariable=self.name_var, width=22)
-        name_entry.grid(row=0, column=1, sticky="ew", pady=4)
-        name_entry.bind("<Return>", lambda e: self._on_name_change())
-        name_entry.bind("<FocusOut>", lambda e: self._on_name_change())
-
-        ttk.Label(content, text="Tüy rengi").grid(row=1, column=0, sticky="w", pady=4)
-        skin_box = ttk.Combobox(content, state="readonly", width=20,
-                                values=[skins.label(k) for k in skins.skin_order()])
-        order = skins.skin_order()
-        skin_box.current(order.index(self.settings.get("skin"))
-                         if self.settings.get("skin") in order else 0)
-        skin_box.grid(row=1, column=1, sticky="ew", pady=4)
-        skin_box.bind("<<ComboboxSelected>>",
-                      lambda e: self._on_skin_change(order[skin_box.current()]))
-
-        ttk.Label(content, text="Boyut").grid(row=2, column=0, sticky="w", pady=4)
-        size_keys = list(SIZE_SCALES.keys())
-        size_box = ttk.Combobox(content, state="readonly", width=20,
-                                values=[SIZE_LABELS[k] for k in size_keys])
-        size_box.current(size_keys.index(self.settings.get("size"))
-                         if self.settings.get("size") in size_keys else 1)
-        size_box.grid(row=2, column=1, sticky="ew", pady=4)
-        size_box.bind("<<ComboboxSelected>>",
-                      lambda e: self._on_size_change(size_keys[size_box.current()]))
-
-        ttk.Label(content, text="Saydamlık").grid(row=3, column=0, sticky="w", pady=4)
-        scale = ttk.Scale(content, from_=20, to=100, variable=self.opacity_var,
-                          command=lambda v: self._on_opacity_change())
-        scale.grid(row=3, column=1, sticky="ew", pady=4)
-
-        ttk.Label(content, text="Arkadaş sayısı").grid(row=4, column=0, sticky="w", pady=4)
-        ttk.Spinbox(content, from_=0, to=3, width=5, textvariable=self.friends_var,
-                    command=self._on_friends_change).grid(row=4, column=1, sticky="w", pady=4)
-
-    def _build_system_tab(self, nb):
-        content = ttk.Frame(nb, padding=18)
-        nb.add(content, text="Sistem")
-        ttk.Checkbutton(content, text="Sesler (miyav / mırlama)",
-                        variable=self.sound_var, command=self._on_sound_change).grid(
-            row=0, column=0, sticky="w", pady=6)
-        ttk.Checkbutton(content, text="İhtiyaç & ruh hali sistemi",
-                        variable=self.needs_var, command=self._on_needs_change).grid(
-            row=1, column=0, sticky="w", pady=6)
-        auto = ttk.Checkbutton(content, text="Windows ile başlat",
-                               variable=self.autostart_var, command=self._on_autostart_change)
-        auto.grid(row=2, column=0, sticky="w", pady=6)
-        if not autostart.available():
-            auto.state(["disabled"])
-
-        ttk.Label(content, text="Ses Kalitesi").grid(row=3, column=0, sticky="w", pady=4)
-        quality_box = ttk.Combobox(content, state="readonly", width=20,
-                                   values=["Yüksek (Gerçekçi WAV)", "Normal (Senteli)"])
-        quality_box.current(0 if self.settings.get("sound_quality") == "high" else 1)
-        quality_box.grid(row=3, column=1, sticky="ew", pady=4)
-        quality_box.bind("<<ComboboxSelected>>",
-                         lambda e: self._on_quality_change(["high", "normal"][quality_box.current()]))
-
-        ttk.Label(content, text="Efekt Yoğunluğu").grid(row=4, column=0, sticky="w", pady=4)
-        density_box = ttk.Combobox(content, state="readonly", width=20,
-                                   values=["Düşük", "Normal", "Yüksek"])
-        density_box.current(self.settings.get("effects_density", 2) - 1)
-        density_box.grid(row=4, column=1, sticky="ew", pady=4)
-        density_box.bind("<<ComboboxSelected>>",
-                         lambda e: self._on_density_change(density_box.current() + 1))
-
-        if getattr(self, "tray", None) and self.tray.available:
-            ttk.Label(content, text="Sistem tepsisi: etkin (sağ tık: menü)").grid(
-                row=5, column=0, sticky="w", pady=6)
-        ttk.Separator(content, orient="horizontal").grid(
-            row=6, column=0, sticky="ew", pady=10)
-        ttk.Button(content, text="Paneli gizle", command=self.panel.withdraw).grid(
-            row=7, column=0, sticky="ew", pady=4)
-        ttk.Button(content, text="Kömür'ü kapat", command=self.close).grid(
-            row=8, column=0, sticky="ew", pady=4)
-        ttk.Separator(content, orient="horizontal").grid(
-            row=9, column=0, sticky="ew", pady=10)
-        ttk.Label(content, text="Kedile Konuş (AI Yardımcı)").grid(
-            row=10, column=0, sticky="w", pady=4)
-        ttk.Button(content, text="Konuşma penceresini aç",
-                   command=self._on_speak_click).grid(
-            row=11, column=0, sticky="ew", pady=4)
-        ttk.Label(content, text="Günlük: %LOCALAPPDATA%\\Komur\\komur.log",
-                  font=("Segoe UI", 8)).grid(row=9, column=0, sticky="w", pady=(10, 0))
-
-    # -- panel callbacks --------------------------------------------------
-    def _on_name_change(self):
-        name = self.name_var.get().strip() or "Kömür"
-        self.name_var.set(name)
-        self.settings.set("name", name)
-        self.say(f"Artık adım {name}!", 4)
-
-    def _on_skin_change(self, skin):
-        self.settings.set("skin", skin)
-        self.skin_var.set(skin)
-        self._apply_skin()
-        for mate in self.companions:
-            skins.apply_skin(mate.renderer, skin)
-        self.say("Yeni kürk!", 4)
-
-    def _on_size_change(self, size):
-        self.settings.set("size", size)
-        self.size_var.set(size)
-        self._apply_size()
-        self._rebuild_companions()
-        self._apply_opacity()
-
-    def _on_opacity_change(self):
-        value = int(self.opacity_var.get())
-        self.settings.set("opacity", value)
-        self._apply_opacity()
-
-    def _on_friends_change(self):
-        self.settings.set("friends", int(self.friends_var.get()))
-        self._rebuild_companions()
-        self._apply_opacity()
-
-    def _on_sound_change(self):
-        enabled = bool(self.sound_var.get())
-        self.settings.set("sound", enabled)
-        if enabled:
-            sound.play("meow", enabled=True)
-
-    def _on_needs_change(self):
-        enabled = bool(self.needs_var.get())
-        self.settings.set("needs", enabled)
-        self.brain.needs_enabled = enabled
-        for mate in self.companions:
-            mate.brain.needs_enabled = enabled
-
-    def _on_autostart_change(self):
-        want = bool(self.autostart_var.get())
-        result = autostart.set_enabled(want)
-        self.autostart_var.set(result)
-        self.settings.set("autostart", result)
-
-    def _on_quality_change(self, quality):
-        self.settings.set("sound_quality", quality)
-        self.quality_var.set(quality)
-        self.effect_orchestrator.set_quality(quality)
-        self.say(f"Ses kalitesi: {'Yüksek' if quality == 'high' else 'Normal'}", 3)
-
-    def _on_density_change(self, density):
-        self.settings.set("effects_density", density)
-        self.density_var.set(density)
-        self.effect_orchestrator.particles.MAX_PARTICLES = {1: 300, 2: 600, 3: 1000}[density]
-        self.say(f"Efekt yoğunluğu: {'Düşük' if density == 1 else 'Normal' if density == 2 else 'Yüksek'}", 3)
+        _show_panel(self)
 
     # -- monitors / geometry ---------------------------------------------
     def next_monitor(self):
@@ -836,13 +560,12 @@ class DesktopCat:
         self.brain.set_bounds(self._movement_bounds(area, self.w, self.h))
         self.brain.move_to(area.right - self.w - 25, area.bottom - self.h - 15)
         self.settings.set("area_index", self.area_index)
-        self.command("wander")
+        self.brain.rest()
         self.say(f"Ekran {self.area_index + 1}/{len(self.areas)}", 5)
 
     @staticmethod
     def _movement_bounds(area, w=WIDTH, h=HEIGHT):
-        return Bounds(area.left, area.top, max(area.left, area.right - w),
-                      max(area.top, area.bottom - h))
+        return movement_bounds(area, w, h)
 
     def _apply_position(self):
         place_window(self.root, self.brain.x, self.brain.y, self.w, self.h)
@@ -859,9 +582,11 @@ class DesktopCat:
             self._poll_tray()
             if self.closed:
                 return
+            self._tick_focus(now)
             if self.drag_origin is None and not self.menu_open:
                 pointer = pointer_position(self.root)
                 reaction = self.activity_reactions.poll(now, self.settings.get("activity_reactions", True))
+                self._apply_activity_reaction(now)
                 compact = self.assistant.compact_visible
                 if compact and self._chat_anchor is None:
                     self._chat_anchor = (self.brain.x, self.brain.y)
@@ -874,7 +599,7 @@ class DesktopCat:
                     ax, ay = self._chat_anchor
                     self.brain.x = max(ax - 24, min(ax + 24, self.brain.x))
                     self.brain.y = max(ay - 16, min(ay + 16, self.brain.y))
-                elif reaction == "gaming" and self.settings.get("focus_mode", True):
+                elif (reaction == "gaming" and self.settings.get("focus_mode", True)) or self._still_reaction or self.focus.phase == "work":
                     self.brain.x = old_x + (self.brain.x - old_x) * .15
                     self.brain.y = old_y + (self.brain.y - old_y) * .15
                 self.brain.activity_reaction = (self._manual_reaction
@@ -904,6 +629,8 @@ class DesktopCat:
                 self.bubble.update_position(self.brain.x, self.brain.y, self.w)
             self._bubble_message = message
             self.bubble.tick(now)
+            self.renderer.accessory = self.settings.get("accessory")
+            self.renderer.time_of_day = self._time_of_day(now)
             self.renderer.draw(
                 self.brain, self.animation_time, message=message,
                 effect_orchestrator=self.effect_orchestrator,
@@ -918,10 +645,38 @@ class DesktopCat:
             if not self.closed:
                 self.after_id = self.root.after(33, self._loop)
 
+    def _apply_activity_reaction(self, now):
+        """Algılanan etkinlik değiştiğinde bir kez: sakin bir duruma geç, seyrek kısa mesaj."""
+        reaction = self.activity_reactions.take_reaction()
+        if not reaction:
+            return
+        self._still_reaction = bool(reaction.get("still"))
+        if now < self._manual_reaction_until or self.assistant.compact_visible:
+            return
+        state = {"loaf": "sit"}.get(reaction.get("state"), reaction.get("state"))
+        self.brain.settle(state)
+        if self._still_reaction and self.brain.state == "wander":
+            self.brain.rest()   # yalnız kendiliğinden gezinmeyi durdur; takip/oyun/uyku bozulmaz
+        if reaction.get("message") and self.settings.get("speech_bubbles", True):
+            self.say_unsolicited(reaction["message"], 8)
+
+    def _time_of_day(self, now):
+        if not self.settings.get("day_night", True):
+            return "day"
+        if now - self._tod_checked >= 60:
+            hour = time.localtime().tm_hour
+            self._tod = "night" if hour >= 22 or hour < 6 else "evening" if hour >= 18 else "day"
+            self._tod_checked = now
+        return self._tod
+
     def close(self):
         if self.closed:
             return
         self.closed = True
+        try:
+            self.activity_reactions.close()
+        except Exception:
+            logging.debug("activity reactions close failed", exc_info=True)
         # remember where we are for next launch
         try:
             self.settings.update(x=round(self.brain.x), y=round(self.brain.y),

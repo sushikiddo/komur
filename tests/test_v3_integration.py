@@ -1,3 +1,4 @@
+import gc
 import json
 import queue
 import threading
@@ -21,6 +22,9 @@ def app_factory(monkeypatch, tmp_path):
     monkeypatch.setattr(cat.Settings, "load", lambda: Settings({"sound": False, "ai_backend": "offline"}))
     apps = []
     def create():
+        # Collect Tk objects of closed apps here, on the main thread; otherwise a
+        # worker thread's GC may run tkinter Variable.__del__ and deadlock Tk.
+        gc.collect()
         instance = cat.DesktopCat()
         apps.append(instance)
         return instance
@@ -28,6 +32,8 @@ def app_factory(monkeypatch, tmp_path):
     for instance in apps:
         if not instance.closed:
             instance.close()
+    apps.clear()
+    gc.collect()
 
 
 def finish(app, seconds=5):

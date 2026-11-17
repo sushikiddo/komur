@@ -1,29 +1,37 @@
 # Kömür — Windows Masaüstü Kedisi ve AI Asistanı
 
-**Onur Can Orhan · Sürüm 1.1.0 · Windows 10/11 x64**
+**Onur Can Orhan · Sürüm 1.2.0 · Windows 10/11 x64**
 
 Kömür, masaüstünde yaşayan siyah-beyaz bir kediyle Türkçe yardımcıyı bir araya getiren Python uygulamasıdır. Kediyle etkileşime girebilir, yazı veya isteğe bağlı sesle konuşabilir, not ve hatırlatıcı oluşturabilir ve desteklenen bilgisayar işlemlerini başlatabilirsiniz.
 
 ## İndir ve kur
 
-- [Windows x64 kurulumu](https://github.com/sushikiddo/komur/releases/download/v1.1.0/Komur-Setup-1.1.0-x64.exe)
-- [SHA-256 dosyası](https://github.com/sushikiddo/komur/releases/download/v1.1.0/Komur-Setup-1.1.0-x64.exe.sha256)
-- [Özgün kaynak ZIP](https://github.com/sushikiddo/komur/releases/download/v1.1.0/Komur-Kaynak-v4.zip)
+- [Windows x64 kurulumu](https://github.com/sushikiddo/komur/releases/download/v1.2.0/Komur-Setup-1.2.0-x64.exe)
+- [SHA-256 dosyası](https://github.com/sushikiddo/komur/releases/download/v1.2.0/Komur-Setup-1.2.0-x64.exe.sha256)
+- [Özgün kaynak ZIP](https://github.com/sushikiddo/komur/releases/download/v1.2.0/Komur-Kaynak-v1.2.0.zip)
 - [Portfolyo](https://onurcanorhan.pages.dev/index.html)
 
-Kurulum dosyası **Desktop.rar içinden çıkarıldı**; boyutu 142.076.675 bayt. Alıcıda Python gerekmez. Kurulum kullanıcı hesabına yapılır, Başlat menüsü kısayolları ve kaldırıcı ekler. Temel yazılı komutlar için AI modeli şart değildir. Yerel sohbet ve ses tanıma modelleri isteğe bağlıdır; ilk indirmeleri internet ve ilave disk alanı gerektirir.
+Kurulum dosyasının boyutu 142.141.449 bayt. Alıcıda Python gerekmez. Kurulum kullanıcı hesabına yapılır, Başlat menüsü kısayolları ve kaldırıcı ekler. Temel yazılı komutlar için AI modeli şart değildir. Yerel sohbet ve ses tanıma modelleri isteğe bağlıdır; ilk indirmeleri internet ve ilave disk alanı gerektirir.
 
 Kurulum kod imzalı değildir; Windows yayımlayıcı/SmartScreen uyarısı gösterebilir. Hash eşleşmesi dosyanın aynı olduğunu gösterir; bağımsız güvenlik denetimi değildir.
 
 ~~~powershell
-Get-FileHash ./Komur-Setup-1.1.0-x64.exe -Algorithm SHA256
+Get-FileHash ./Komur-Setup-1.2.0-x64.exe -Algorithm SHA256
 ~~~
 
 Beklenen SHA-256:
 
 ~~~text
-ebcea72b23c45d5e1cb469780f7ecf5b068332b331420b62c24024f00e22a97f
+3724be1f917bd030b51ccc8d7cfbceca150c13367c1e3f3339d4aa6ee0158206
 ~~~
+
+## 1.2'de yenilikler
+
+- **Sakin hareket:** Kedi bir yuvada dinlenir, ekranı dolaşmaz; hareket seviyesi Ayarlar'dan seçilir.
+- **Ekranı anlama:** Video (mısırla izler), müzik (dans), oyun, kodlama, yazı, okuma, toplantı, boşta ve uzakta durumlarına sakin tepkiler. Başlıklar kaydedilmez, ağa gitmez.
+- **AI:** Akıcı (kelime kelime) yanıt, yerel modelde serbest cümleden komut seçimi, tutarlı kişilik, yerel alışkanlık hafızası. Varsayılan Claude modeli claude-sonnet-5-5.
+- **Yeni:** Pomodoro/odak modu, isteğe bağlı "Hey Kömür" (varsayılan kapalı), aksesuarlar, gece/akşam tonu, eklentiler (ör. "zar at").
+- **Güncellemeler:** Günde en fazla bir kez bu deponun son sürümü denetlenir; indirme ve kurulum yalnız onayla, SHA-256 doğrulamalı.
 
 ## Ne işe yarar?
 
@@ -113,9 +121,7 @@ Son betik Inno Setup 6 derleyicisi ve üretilmiş ana EXE gerektirir; lisans top
 
 ## Doğrulama ve sınırlar
 
-Bu yayın hazırlığında 73 Python dosyasının sözdizimi kontrol edildi. Desktop.rar içindeki EXE özeti yanındaki SHA-256 dosyasıyla eşleşti. Bunlar tüm özelliklerin çalıştığının kanıtı değildir.
-
-Paketle gelen [TEST_SONUCLARI-v4.md](TEST_SONUCLARI-v4.md), önceki geliştirme oturumunda 200 testin geçtiğini, bir testin atlandığını ve 46 GUI senaryosunun çalıştığını bildiriyor. Bu sayılar bu yayın hazırlığında yeniden çalıştırılmış sonuçlar değildir. Raporda atıf yapılan JSON ve görsellerin tamamı kaynak ZIP'inde yok.
+1.2.0 için 388 otomatik test geçti (1 atlandı); derlenmiş EXE duman testi ile kurulum/kaldırma denemesi geçti. Bunlar tüm özelliklerin her bilgisayarda çalıştığının kanıtı değildir. Gerçek video oynatırken mısır tepkisi ve gerçek mikrofonla "Hey Kömür" bu yayın hazırlığında elle denenmedi.
 
 Temiz bir alıcı bilgisayarda tüm kurulum ve özellikler bu yayın hazırlığında uçtan uca denenmedi. İstemciyi açmak oyuna giriş veya indirmenin tamamlandığı anlamına gelmez. AI yanlış yanıt verebilir; ekran denetimleri tüm uygulamalarda bulunmaz.
 
