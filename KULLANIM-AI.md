@@ -123,7 +123,7 @@ Uygulama kapatma, bilgisayarı kapatma/yeniden başlatma, çöp kutusu boşaltma
 
 ## Başka bilgisayara kurma
 
-Paylaşılacak dosya **Komur-Setup-2.1-x64.exe** kurulum programıdır. Windows 10/11 64 bit desteklenir; alıcıda Python gerekmez. Kurulum kullanıcı hesabına yapılır, Başlat menüsü kısayolları ve kaldırıcı ekler. Kurulum yardımcısı model indirmelerini boyutlarıyla gösterir; indirme yalnız kullanıcının seçimi/onayıyla başlar. AI veya ses kurulmadan temel yazılı komutlar kullanılabilir. Önceki sürümün üzerine kurulum yapılabilir; kişisel veriler ayrı klasörde korunur.
+Paylaşılacak dosya **Komur-Setup-2.2-x64.exe** kurulum programıdır. Windows 10/11 64 bit desteklenir; alıcıda Python gerekmez. Kurulum kullanıcı hesabına yapılır, Başlat menüsü kısayolları ve kaldırıcı ekler. Kurulum yardımcısı model indirmelerini boyutlarıyla gösterir; indirme yalnız kullanıcının seçimi/onayıyla başlar. AI veya ses kurulmadan temel yazılı komutlar kullanılabilir. Önceki sürümün üzerine kurulum yapılabilir; kişisel veriler ayrı klasörde korunur.
 
 Kurulum paketi sizin sohbetlerinizi, notlarınızı, ayarlarınızı, API anahtarlarınızı veya indirilmiş modellerinizi içermez. Kaldırma kişisel hafızayı ve paylaşılan Ollama/model dosyalarını silmez; bunları ayrıca yönetebilirsiniz. Üçüncü taraf lisansları kurulumdaki `licenses` klasöründedir.
 
