@@ -47,7 +47,7 @@ def chat_preview():
         chat_log=[("Sen", "Merhaba Kömür!"),
                   ("Kömür", "Buradayım. Yazabilir veya Konuş'a basabilirsin.")],
         listening=False, show_history=lambda: None, toggle_listening=lambda: None,
-        share_screen=lambda: None, set_voice_enabled=lambda value: None,
+        share_screen=lambda: None, share_clipboard=lambda: None, set_voice_enabled=lambda value: None,
         send_text=lambda value: False, cancel_listening=lambda: None,
         cancel_response=lambda: None)
     bubble = ChatBubble(assistant)

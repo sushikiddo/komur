@@ -87,9 +87,11 @@ def _turkish_voice_token():
 
 
 class VoiceService:
-    def __init__(self, model_dir=MODEL_DIR, input_device=None, speech_rate=0):
+    def __init__(self, model_dir=MODEL_DIR, input_device=None, speech_rate=0, natural_tts=True):
         self.input_device = input_device
         self.speech_rate = speech_rate
+        self.natural_tts = bool(natural_tts)
+        self._natural_tts = None
         self.model_dir = Path(model_dir)
         self._model = None
         self._stop = threading.Event()
@@ -291,8 +293,7 @@ class VoiceService:
         finally:
             self._wake_idle.set()
 
-    def speak(self, text):
-        """Start local speech in a background thread; return False if unavailable."""
+    def _speak_sapi(self, text):
         token = _turkish_voice_token()
         if not str(text).strip() or not token:
             return False
@@ -327,8 +328,38 @@ class VoiceService:
         except OSError:
             return False
 
+    def speak(self, text):
+        """Start local speech in a background thread; return False if unavailable."""
+        clean = str(text).strip()
+        if not clean:
+            return False
+        with self._lock:
+            if self._closed:
+                return False
+        if getattr(self, "natural_tts", True):
+            try:
+                from acoustic_engine import NaturalTurkishTTS
+            except Exception:
+                NaturalTurkishTTS = None
+            if NaturalTurkishTTS is not None:
+                try:
+                    if self._natural_tts is None:
+                        self._natural_tts = NaturalTurkishTTS(
+                            speech_rate=self.speech_rate,
+                            sapi_fallback=self._speak_sapi,
+                        )
+                    return self._natural_tts.speak_sync(clean) is not None
+                except Exception:
+                    pass
+        return self._speak_sapi(clean)
+
     def stop(self):
         """Stop speech playback without cancelling an active recording."""
+        if self._natural_tts is not None:
+            try:
+                self._natural_tts.stop()
+            except Exception:
+                pass
         with self._lock:
             process = self._speech_process
             self._speech_process = None

@@ -223,6 +223,25 @@ class AssistantUI:
         self.append("Sen", "Son seçtiğim pencereyi oku ve kısaca açıkla.")
         self.submit(self.capture_and_explain, kind="reply")
 
+    def share_clipboard(self):
+        """Panodaki metni (kullanıcı düğmeye bastığında) açıkla. Pano Tk iş parçacığında okunur."""
+        if self.busy:
+            return False
+        try:
+            text = self.app.root.clipboard_get()
+        except Exception:
+            text = ""
+        from screen_vision import build_request
+        question, context, kind = build_request(text, source="pano")
+        if question is None:
+            self.append("Kömür", "Panoda metin yok. Bir hata ya da kod kopyalayıp tekrar dene.")
+            return False
+        self.append("Sen", {"error": "Panodaki hatayı açıkla.", "code": "Panodaki kodu açıkla."}
+                    .get(kind, "Panodaki metni özetle."))
+        self.context_tainted = True
+        self.submit(self.ai.explain_screen, question, context, kind="reply")
+        return True
+
     def capture_and_explain(self):
         self.screen_context = ""
         self.screen_expires = 0
@@ -236,7 +255,11 @@ class AssistantUI:
         self.screen_context = self.screen.context(snapshot)
         self.context_tainted = True
         self.screen_expires = time.monotonic() + 60
-        result = self.ai.explain_screen("Paylaştığım pencereyi kısaca açıkla; hangi kontrollerin kullanılabilir olduğunu söyle. Görmediğin ayrıntıları uydurma.", self.screen_context)
+        from screen_vision import QUESTIONS, classify
+        kind = classify(snapshot.get("ocr_text", ""))
+        question = (QUESTIONS[kind] + " Görmediğin ayrıntıları uydurma." if kind in ("error", "code") else
+                    "Paylaştığım pencereyi kısaca açıkla; hangi kontrollerin kullanılabilir olduğunu söyle. Görmediğin ayrıntıları uydurma.")
+        result = self.ai.explain_screen(question, self.screen_context)
         result.reply = f"Okunan pencere: {snapshot['title']}\n" + result.reply
         return result
 

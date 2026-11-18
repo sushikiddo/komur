@@ -118,6 +118,15 @@ class CatBrain:
         if state == "wander":
             self._pick_wander_target()
 
+    def go_to(self, x, y, max_seconds=20.0):
+        """Belirli bir noktaya yürü (oyuncak/kase); varınca oturur. Takip/oyun/uyku bölünmez."""
+        if self.state in ("follow", "play", "sleep") or self.paused:
+            return False
+        self._sleep_requested = False
+        self._change("wander", duration=max_seconds)
+        self.target_x, self.target_y = self._clamp(x, y)
+        return True
+
     def _pick_wander_target(self):
         radius = ACTIVITY_PROFILES[self.activity]["radius"]
         if self._free_roam or radius is None:

@@ -22,6 +22,7 @@ import random
 import threading
 import time
 import tempfile
+import types
 import tkinter as tk
 import tkinter.simpledialog as simpledialog
 import tkinter.messagebox as messagebox
@@ -41,8 +42,9 @@ from tray import Tray
 from bubble import SpeechBubble
 from assistant_ui import AssistantUI
 from activity_reactions import ActivityReactions
-from companion import Companion
+from companion import Companion, step_companions
 from panel import TITLE, show_panel as _show_panel
+import window_utils
 from window_utils import (BG, HEIGHT, IS_WINDOWS, WIDTH, enable_dpi_awareness, make_transparent, monitor_bounds,
                           movement_bounds, place_window, pointer_position)
 
@@ -122,7 +124,8 @@ class PanelShortcut:
     """Own the hotkey on a worker thread so Tk cannot consume WM_HOTKEY."""
 
     def __init__(self):
-        self.requested = threading.Event()
+        self.requested = threading.Event()        # Ctrl+Shift+K -> panel
+        self.boss_requested = threading.Event()   # Ctrl+Shift+H -> patron tuşu
         self.stopped = threading.Event()
         self.ready = threading.Event()
         self.registered = False
@@ -134,6 +137,7 @@ class PanelShortcut:
         user32 = ctypes.windll.user32
         # id 19267, MOD_CONTROL|MOD_SHIFT|MOD_NOREPEAT (16390), 'K'
         self.registered = bool(user32.RegisterHotKey(None, 19267, 16390, ord("K")))
+        boss = bool(user32.RegisterHotKey(None, 19268, 16390, ord("H")))
         self.ready.set()
         try:
             msg = wintypes.MSG()
@@ -141,9 +145,13 @@ class PanelShortcut:
                 while user32.PeekMessageW(ctypes.byref(msg), None, 786, 786, 1):
                     if msg.wParam == 19267:
                         self.requested.set()
+                    elif msg.wParam == 19268:
+                        self.boss_requested.set()
         finally:
             if self.registered:
                 user32.UnregisterHotKey(None, 19267)
+            if boss:
+                user32.UnregisterHotKey(None, 19268)
 
     def close(self):
         self.stopped.set()
@@ -218,6 +226,9 @@ class DesktopCat:
         self.dragged = False
         self.menu_open = False
         self.closed = False
+        self.hidden = False
+        self.muted = False
+        self.stealth_mode = False
         self.after_id = None
         self.hotkey_id = None
         self.shortcut = None
@@ -246,6 +257,11 @@ class DesktopCat:
         self.friends_var = tk.IntVar(value=self.settings.get("friends"))
         self.quality_var = tk.StringVar(value=self.settings.get("sound_quality", "high"))
         self.density_var = tk.IntVar(value=self.settings.get("effects_density", 2))
+        self.retro_var = tk.BooleanVar(value=bool(self.settings.get("retro_mode", False)))
+        self.persona_var = tk.StringVar(value=self.settings.get("persona", "asil_tembel"))
+        self.affection_var = tk.StringVar(
+            value=f"Sv.{self.settings.get('affection_level', 1)} ({self.settings.get('affection_xp', 0)} XP)"
+        )
 
         self._make_menu()
         self.canvas.bind("<ButtonPress-1>", self._press)
@@ -279,8 +295,127 @@ class DesktopCat:
         self._chat_anchor = None
         self._manual_reaction = None
         self._manual_reaction_until = 0.0
+        self._cached_has_toast = False
+        self.brain.vx = 0.0
+        self.brain.vy = 0.0
+        self.brain.pointer_xy = None
+        self.effect_orchestrator.cat_screen_x = self.brain.x + self.w / 2
+        self.effect_orchestrator.screen_w = max(1.0, area.right - area.left)
         self._init_speech()
+        self._init_v2_modules(area)
         self._loop()
+
+    def _init_v2_modules(self, area):
+        """Initialize v2.0 subsystems defensively so missing optional pieces never crash startup."""
+        self.physics = None
+        self.acoustic = None
+        self.hardware_mind = None
+        self.dream_engine = None
+        self.dev_bridge = None
+        self.toybox = None
+        self.weather = None
+        try:
+            from weather import WeatherWatcher
+            self.weather = WeatherWatcher()
+            self.weather.set_city(self.settings.get("weather_city", ""))
+        except Exception:
+            logging.debug("WeatherWatcher init failed", exc_info=True)
+        try:
+            from desktop_toys import ToyBox
+            self.toybox = ToyBox(self.root)
+        except Exception:
+            logging.debug("ToyBox init failed", exc_info=True)
+        try:
+            from dev_bridge import DevBridge
+            self.dev_bridge = DevBridge(self.settings.get("dev_repo_path", "") or Path.cwd())
+        except Exception:
+            logging.debug("DevBridge init failed", exc_info=True)
+        self.meow_translator = None
+        self.rubber_duck = None
+        self.affection = None
+        self.fish_pond = None
+        self.basket = None
+        self.boss_key = None
+        self.health_guard = None
+
+        bounds = (area.left, area.top, area.right, area.bottom)
+        mem = getattr(self.assistant, "memory", None)
+        ai_client = getattr(self.assistant, "ai", None)
+
+        try:
+            from desktop_physics import DesktopPhysics
+            self.physics = DesktopPhysics(cat_w=self.w, cat_h=self.h, bounds=bounds)
+        except Exception:
+            logging.debug("DesktopPhysics init failed", exc_info=True)
+
+        try:
+            from acoustic_engine import (
+                DynamicPurrController,
+                KeyboardReactiveAudio,
+                LofiAmbiencePlayer,
+                MicNoiseMonitor,
+                NaturalTurkishTTS,
+            )
+            self.acoustic = types.SimpleNamespace(
+                purr=DynamicPurrController(),
+                keyboard=KeyboardReactiveAudio(),
+                lofi=LofiAmbiencePlayer(),
+                tts=NaturalTurkishTTS(speech_rate=self.settings.get("speech_rate", 0)),
+                mic=MicNoiseMonitor(),
+            )
+        except Exception:
+            logging.debug("AcousticEngine init failed", exc_info=True)
+
+        try:
+            from persona_dreams import (
+                DreamEngine,
+                HardwareMind,
+                MeowTranslator,
+                RubberDuckDebugger,
+            )
+            self.hardware_mind = HardwareMind()
+            self.meow_translator = MeowTranslator()
+            self.rubber_duck = RubberDuckDebugger()
+            if self.settings.get("rubber_duck_mode", False):
+                self.rubber_duck.activate()
+            if mem is None:
+                from memory_store import MemoryStore
+                mem = MemoryStore()
+            self.dream_engine = DreamEngine(memory_store=mem)
+        except Exception:
+            logging.debug("Persona/Dreams init failed", exc_info=True)
+
+        try:
+            from gamification_productivity import (
+                AffectionSystem,
+                BossKeyController,
+                CatBasketDropTarget,
+                HealthWaterGuard,
+                TodoFishPond,
+                enable_file_drop,
+            )
+            self.affection = AffectionSystem(settings=self.settings, memory_store=mem)
+            self.fish_pond = TodoFishPond(affection=self.affection, bounds=bounds)
+            self.basket = CatBasketDropTarget(ai_client=ai_client, memory_store=mem)
+            self.boss_key = BossKeyController()
+            self.health_guard = HealthWaterGuard()
+            enable_file_drop(self.root, self._on_file_drop)
+        except Exception:
+            logging.debug("Gamification/Productivity init failed", exc_info=True)
+
+        try:
+            self.brain.age_days = float(self.settings.get("age_days", 7.0))
+            if hasattr(self.renderer, "set_retro_mode"):
+                self.renderer.set_retro_mode(bool(self.settings.get("retro_mode", False)))
+        except Exception:
+            logging.debug("Renderer/age sync failed", exc_info=True)
+
+        self.context_hud = None
+        try:
+            from context_hud import ModernContextHUD
+            self.context_hud = ModernContextHUD(self)
+        except Exception:
+            logging.debug("ModernContextHUD init failed", exc_info=True)
 
     # -- menu / hotkey ----------------------------------------------------
     def _make_menu(self):
@@ -292,6 +427,23 @@ class DesktopCat:
             ("Yerde yuvarlan", "roll"), ("Esne", "yawn"), ("Sıkıl", "bored"),
         ):
             self.menu.add_command(label=label, command=lambda name=command: self.command(name))
+        self.menu.add_separator()
+        v2_menu = tk.Menu(self.menu, tearoff=False, font=("Segoe UI", 10))
+        v2_menu.add_command(label="Karton kutu bırak", command=self.toggle_box_prop)
+        for kind, label in (("yarn", "İplik yumağı at/kaldır"), ("bowl", "Süt kasesi koy/kaldır"),
+                            ("post", "Tırmalama tahtası koy/kaldır")):
+            v2_menu.add_command(label=label, command=lambda k=kind: self.toggle_toy(k))
+        v2_menu.add_command(label="Lazer aç/kapat", command=self.toggle_laser)
+        v2_menu.add_command(label="Pencere tepesine tüne", command=self.perch_active_window)
+        v2_menu.add_command(label="Görev çubuğuna in", command=self.walk_on_taskbar_cmd)
+        v2_menu.add_command(label="Retro Pixel modu", command=self.toggle_retro_mode)
+        v2_menu.add_command(label="Lastik Ördek modu", command=self.toggle_rubber_duck)
+        v2_menu.add_command(label="Geliştirici deposu seç…", command=self.choose_dev_repo)
+        v2_menu.add_command(label="Hava durumu (şehir)…", command=self.choose_weather_city)
+        v2_menu.add_command(label="Panodakini açıkla", command=self.explain_clipboard)
+        v2_menu.add_command(label="Lofi Ambiyans aç/kapat", command=self.toggle_lofi_ambience)
+        v2_menu.add_command(label="Patron Tuşu (Gizle)", command=self.toggle_boss_key)
+        self.menu.add_cascade(label="v2.0 Özellikler", menu=v2_menu)
         self.menu.add_separator()
         self.menu.add_command(label="Pomodoro başlat / bitir", command=self.toggle_focus)
         self.menu.add_command(label="Duraklat / Devam et", command=self.toggle_pause)
@@ -316,9 +468,254 @@ class DesktopCat:
             kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
             if kernel.WaitForSingleObject(self.activation_event, 0) == 0:
                 self.show_panel()
-        if self.shortcut is not None and self.shortcut.requested.is_set():
+        if self.shortcut is None:
+            return
+        if self.shortcut.requested.is_set():
             self.shortcut.requested.clear()
             self.show_panel()
+        boss = getattr(self.shortcut, "boss_requested", None)
+        if boss is not None and boss.is_set():
+            boss.clear()
+            if self.settings.get("boss_key_mode", False):
+                self.toggle_boss_key()
+
+    def toggle_boss_key(self):
+        if getattr(self, "boss_key", None) is None:
+            return None
+        return self.boss_key.toggle(self)
+
+    def toggle_box_prop(self):
+        if getattr(self, "physics", None) is None:
+            return None
+        if any(p.kind == "box" for p in self.physics.props):
+            self.physics.clear_props("box")
+            self.say("Karton kutu kaldırıldı.", 3)
+            return False
+        self.physics.spawn_prop("box", self.brain.x, self.brain.y)
+        self.say("Karton kutu bırakıldı! 📦", 4)
+        return True
+
+    def toggle_toy(self, kind):
+        """Masaüstü oyuncağını kedinin yanına koy ya da kaldır."""
+        if getattr(self, "toybox", None) is None:
+            return None
+        side = 140 if self.brain.facing >= 0 else -140
+        placed = self.toybox.toggle(kind, self.brain.x + self.w / 2 + side, self.brain.y + self.h * 0.93)
+        from desktop_toys import LABELS
+        self.say(f"{LABELS[kind]} {'hazır!' if placed else 'kaldırıldı.'}", 3)
+        return placed
+
+    def _step_toys(self, dt, now):
+        box = getattr(self, "toybox", None)
+        if box is None:
+            return
+        box.set_visible(not self.hidden)
+        if not box.toys or self.hidden:
+            return
+        if self._frames % 30 == 0 or not hasattr(self, "_toy_platforms"):
+            rect = window_utils.active_window_rect(ignore_hwnds=self._own_hwnds())
+            # küçük pencereler (oyuncakların kendisi dahil) raf sayılmaz
+            self._toy_platforms = [(rect[0], rect[1], rect[2])] if rect and rect[2] - rect[0] >= 160 else []
+        area = self.areas[self.area_index]
+        event = box.step(
+            dt, now, (area.left, area.top, area.right, area.bottom), self._toy_platforms,
+            (self.brain.x + self.w / 2, self.brain.y + self.h * 0.85),
+            self.brain.state in ("sit", "look", "groom") and not self.brain.paused,
+            float(getattr(self.brain, "hunger", 0.0)),
+        )
+        if not event:
+            return
+        action = event["action"]
+        if action == "go":
+            tx, bottom = event["target"]
+            self.brain.go_to(tx - self.w / 2, bottom - self.h * 0.93)
+        elif action == "bat":
+            self.brain._change("chirp")
+        elif action == "drink":
+            if hasattr(self.brain, "feed"):
+                self.brain.feed()
+            self.say_unsolicited("Süt! Lık lık lık… 🥛", 5)
+        elif action == "scratch":
+            self.brain._change("stretch")
+            if getattr(self, "affection", None) is not None:
+                try:
+                    self.affection.record_action("play")
+                except Exception:
+                    logging.debug("Affection action failed", exc_info=True)
+
+    def toggle_laser(self):
+        if getattr(self, "physics", None) is None:
+            return None
+        if self.physics.chasing_laser:
+            self.physics.clear_props("laser")
+            self.say("Lazer kapatıldı.", 3)
+            return False
+        self.physics.spawn_prop("laser", self.brain.x + 40, self.brain.y + 40)
+        self.say("Lazer yakalama zamanı! 🔴", 4)
+        return True
+
+    def _own_hwnds(self):
+        """Return known HWND integers for Komur's own windows so active_window_rect ignores them."""
+        hwnds = set()
+        candidates = [getattr(self, "root", None), getattr(self, "panel", None)]
+        bubble = getattr(self, "bubble", None)
+        if bubble is not None:
+            candidates.append(getattr(bubble, "window", None) or getattr(bubble, "root", None))
+        assistant = getattr(self, "assistant", None)
+        if assistant is not None:
+            candidates.append(getattr(assistant, "window", None))
+            candidates.append(getattr(assistant, "compact_window", None))
+        for mate in getattr(self, "companions", ()) or ():
+            candidates.append(getattr(mate, "root", None) or getattr(mate, "window", None))
+        for win in candidates:
+            if win is None:
+                continue
+            try:
+                wid = int(win.winfo_id())
+                if wid:
+                    hwnds.add(wid)
+                    if IS_WINDOWS:
+                        parent = ctypes.windll.user32.GetParent(wid)
+                        if parent:
+                            hwnds.add(int(parent))
+            except Exception:
+                continue
+        return hwnds
+
+    def perch_active_window(self):
+        """Jump onto the top edge of the active foreground window."""
+        if getattr(self, "physics", None) is None:
+            return False
+        rect = window_utils.active_window_rect(ignore_hwnds=self._own_hwnds())
+        if rect is None:
+            self.say("Tünenecek aktif pencere bulunamadı.", 3)
+            return False
+        ok = self.physics.perch_on_window(rect, cat_x=self.brain.x)
+        if ok:
+            self.brain.x, self.brain.y = self.physics.x, self.physics.y
+            self.brain.command("perch")
+            self._apply_position()
+            self.say("Pencere tepesine zıpladım! 🐾", 4)
+        return ok
+
+    def walk_on_taskbar_cmd(self):
+        """Move the cat down onto the top edge of the Windows taskbar."""
+        if getattr(self, "physics", None) is None:
+            return False
+        tb = window_utils.taskbar_rect()
+        if tb is None:
+            self.say("Görev çubuğu bulunamadı.", 3)
+            return False
+        ok = self.physics.walk_on_taskbar(tb, cat_x=self.brain.x)
+        if ok:
+            self.brain.x, self.brain.y = self.physics.x, self.physics.y
+            self.brain.rest()
+            self._apply_position()
+            self.say("Görev çubuğuna indim!", 4)
+        return ok
+
+    def toggle_retro_mode(self):
+        enabled = not bool(self.settings.get("retro_mode", False))
+        self.settings.set("retro_mode", enabled)
+        if hasattr(self, "retro_var"):
+            self.retro_var.set(enabled)
+        if getattr(self, "renderer", None) is not None and hasattr(self.renderer, "set_retro_mode"):
+            self.renderer.set_retro_mode(enabled)
+        self.say(f"Retro Pixel modu {'açıldı' if enabled else 'kapandı'}.", 3)
+        return enabled
+
+    def explain_clipboard(self):
+        """Küçük sohbeti aç ve panodaki hata/kod/metni açıklat."""
+        self.assistant.show()
+        return self.assistant.share_clipboard()
+
+    def choose_weather_city(self, city=None):
+        """Gerçek hava durumunu aç (şehir) ya da kapat (boş). Açıkken şehir adı Open-Meteo'ya gider."""
+        if getattr(self, "weather", None) is None:
+            return False
+        if city is None:
+            from tkinter import simpledialog
+            city = simpledialog.askstring(
+                "Hava durumu",
+                "Şehir adı (boş bırakırsan kapanır). "
+                "Açıkken yalnız şehir adı Open-Meteo'ya gönderilir.",
+                initialvalue=self.settings.get("weather_city", ""), parent=self.root)
+            if city is None:
+                return False
+        city = city.strip()
+        self.settings.update(weather_city=city, weather_enabled=bool(city))
+        self.weather.set_city(city)
+        self.brain.weather = None
+        self.say(f"{city} için havaya bakacağım. 🌦️" if city else "Hava durumu kapatıldı.", 4)
+        return bool(city)
+
+    def _step_weather(self):
+        watcher = getattr(self, "weather", None)
+        if watcher is None:
+            return
+        watcher.poll(self.settings.get("weather_enabled", False))
+        self.brain.weather = watcher.condition
+        change = watcher.take_change()
+        if change:
+            from weather import MESSAGES, SETTLE
+            if change in SETTLE:
+                self.brain.settle(SETTLE[change])
+            if change in MESSAGES and self.settings.get("speech_bubbles", True):
+                self.say_unsolicited(MESSAGES[change], 7)
+
+    def choose_dev_repo(self, path=None):
+        """Commit/test tepkileri için izlenecek Git deposunu seç."""
+        if getattr(self, "dev_bridge", None) is None:
+            return False
+        if path is None:
+            from tkinter import filedialog
+            path = filedialog.askdirectory(parent=self.root, title="İzlenecek Git deposu")
+            if not path:
+                return False
+        if not self.dev_bridge.set_repo(path):
+            self.say("Orada bir Git deposu bulamadım.", 4)
+            return False
+        self.settings.set("dev_repo_path", str(self.dev_bridge.root))
+        self.say(f"{self.dev_bridge.root.name} deposunu izliyorum. Commit'lerde dans, testler patlarsa tıslama!", 6)
+        return True
+
+    def toggle_rubber_duck(self):
+        if getattr(self, "rubber_duck", None) is None:
+            return False
+        active = not self.rubber_duck.active
+        if active:
+            self.rubber_duck.activate()
+            self.settings.set("rubber_duck_mode", True)
+            self.say("Lastik Ördek modu açık! Sorunu adım adım anlat. 🦆", 5)
+        else:
+            self.rubber_duck.deactivate()
+            self.settings.set("rubber_duck_mode", False)
+            self.say("Lastik Ördek modu kapatıldı.", 3)
+        return active
+
+    def toggle_lofi_ambience(self):
+        lofi = getattr(getattr(self, "acoustic", None), "lofi", None)
+        if lofi is None:
+            return False
+        if lofi.is_playing:
+            lofi.stop()
+            self.settings.set("lofi_ambience", False)
+            self.say("Lofi ambiyans durduruldu.", 3)
+            return False
+        lofi.start(master_vol=max(0.1, min(1.0, (self.settings.get("sound_volume", 70) or 70) / 200.0)))
+        self.settings.set("lofi_ambience", True)
+        self.say("Lofi odak ambiyansı başladı. 🎧", 3)
+        return True
+
+    def _on_file_drop(self, paths):
+        if not paths or getattr(self, "basket", None) is None:
+            return []
+        results = self.basket.handle_drop_many(list(paths))
+        if results:
+            msg = results[-1].get("message")
+            if msg:
+                self.say(msg, 8)
+        return results
 
     def _poll_tray(self):
         if not getattr(self, "tray", None):
@@ -359,6 +756,11 @@ class DesktopCat:
         events = self.focus.tick(now)
         for event in events:
             self.say(MESSAGES[event], 8)
+            if event == "work_done" and getattr(self, "affection", None) is not None:
+                try:
+                    self.affection.record_action("pomodoro")
+                except Exception:
+                    logging.debug("Affection pomodoro XP failed", exc_info=True)
         if events:
             state = phase_to_cat_state(self.focus.phase)
             if state:
@@ -397,7 +799,13 @@ class DesktopCat:
         self.assistant.show_history()
 
     def _on_key_press(self, event):
-        pass
+        kb = getattr(getattr(self, "acoustic", None), "keyboard", None)
+        if kb is not None:
+            try:
+                if kb.record_keystroke() == "keyboard_trill" and self.settings.get("sound", True):
+                    sound.play("chirp", enabled=True)
+            except Exception:
+                logging.debug("Keyboard reactive audio failed", exc_info=True)
 
     def command(self, name):
         if name in ("dance", "watch"):
@@ -429,10 +837,19 @@ class DesktopCat:
             "yawn": "Uykum mu geliyor ne…",
         }.get(name, ""), 5)
         # Görsel efenkler
-        if name == "pet":
-            self.effect_orchestrator.trigger("pet", 0, 0)
-        elif name == "feed":
-            self.effect_orchestrator.trigger("feed", 0, 0)
+        orchestrator = getattr(self, "effect_orchestrator", None)
+        if orchestrator is not None:
+            orchestrator.cat_screen_x = self.brain.x + self.w / 2
+            if name in ("pet", "feed"):
+                orchestrator.trigger(name, 0, 0)
+
+        if name in ("pet", "feed", "play") and getattr(self, "affection", None) is not None:
+            try:
+                ev = self.affection.record_action(name)
+                if ev.get("leveled_up"):
+                    self.say(f"Dostluk Seviye {ev['level']} oldu! ✨", 6)
+            except Exception:
+                logging.debug("Affection action failed", exc_info=True)
 
         self._refresh_status()
 
@@ -440,6 +857,7 @@ class DesktopCat:
         state = self.brain.state
         if state == self._effect_state:
             return
+        self.effect_orchestrator.cat_screen_x = self.brain.x + self.w / 2
         self.effect_orchestrator.trigger_state_exit(self._effect_state, 0, 0)
         self.effect_orchestrator.trigger_state_enter(state, 0, 0)
         if state == "follow":
@@ -478,8 +896,19 @@ class DesktopCat:
         self._on_speak_click()
 
     def _show_menu(self, event):
-        self.menu_open = True
         self.drag_origin = None
+        hud = getattr(self, "context_hud", None)
+        if hud is not None:
+            try:
+                if hud.visible:
+                    hud.hide()
+                    self.menu_open = False
+                else:
+                    hud.show(event.x_root, event.y_root)
+                return
+            except Exception:
+                logging.debug("ModernContextHUD show failed, falling back to tk.Menu", exc_info=True)
+        self.menu_open = True
         try:
             self.menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -502,6 +931,8 @@ class DesktopCat:
             f"{label}    •    Enerji %{self.brain.energy:.0f}"
             f"    •    Keyif %{self.brain.happiness:.0f}{extra}"
         )
+        if getattr(self, "affection", None) is not None and hasattr(self, "affection_var"):
+            self.affection_var.set(f"Sv.{self.affection.level} ({self.affection.xp} XP)")
 
     # -- appearance / settings -------------------------------------------
     def _apply_opacity(self):
@@ -608,13 +1039,21 @@ class DesktopCat:
                 if not self.brain.paused:
                     self.animation_time += dt
                 self.effect_orchestrator.step(dt)
-                if not (reaction == "gaming" and self.settings.get("focus_mode", True)):
-                    for mate in self.companions:
-                        mate.step(dt, pointer)
+                self._step_v2_subsystems(dt, pointer, now)
+                inv_dt = 1.0 / max(dt, 0.001)
+                self.brain.vx = (self.brain.x - old_x) * inv_dt
+                self.brain.vy = (self.brain.y - old_y) * inv_dt
+                self.brain.pointer_xy = pointer
+                self.effect_orchestrator.cat_screen_x = self.brain.x + self.w / 2
+                area = self.areas[self.area_index]
+                self.effect_orchestrator.screen_w = max(1.0, area.right - area.left)
+                if not (reaction == "gaming" and self.settings.get("focus_mode", True)) and self.companions:
+                    step_companions(self.companions, dt, pointer, primary_cat=self)
                 self._update_speech(now, pointer)
-            self._apply_position()
+            if not self.hidden:
+                self._apply_position()
             message = self.message if now < self.message_until else self._get_speech_message(now)
-            if self.assistant.compact_visible:
+            if self.hidden or self.assistant.compact_visible:
                 self.bubble.hide()
             elif self.settings.get("speech_bubbles") and message:
                 if message != self._bubble_message or not self.bubble.visible:
@@ -631,10 +1070,14 @@ class DesktopCat:
             self.bubble.tick(now)
             self.renderer.accessory = self.settings.get("accessory")
             self.renderer.time_of_day = self._time_of_day(now)
-            self.renderer.draw(
-                self.brain, self.animation_time, message=message,
-                effect_orchestrator=self.effect_orchestrator,
-            )
+            if hasattr(self.renderer, "set_retro_mode"):
+                self.renderer.set_retro_mode(bool(self.settings.get("retro_mode", False)))
+            self.brain.age_days = float(self.settings.get("age_days", 7.0))
+            if not self.hidden:
+                self.renderer.draw(
+                    self.brain, self.animation_time, message=message,
+                    effect_orchestrator=self.effect_orchestrator,
+                )
             self._frames += 1
             if self._frames % 20 == 0:
                 self._refresh_status()
@@ -643,7 +1086,94 @@ class DesktopCat:
             self.say("Bir çizim sorunu oluştu; yeniden deneniyor.", 2)
         finally:
             if not self.closed:
-                self.after_id = self.root.after(33, self._loop)
+                self.after_id = self.root.after(16, self._loop)
+
+    def _step_v2_subsystems(self, dt, pointer, now):
+        """Advance v2.0 physics, fish pond, health guard, and periodic sensors safely."""
+        try:
+            self._step_toys(dt, now)
+        except Exception:
+            logging.debug("ToyBox step failed", exc_info=True)
+        if getattr(self, "physics", None) is not None:
+            try:
+                if self._frames % 30 == 0 or not hasattr(self, "_cached_has_toast"):
+                    self._cached_has_toast = bool(window_utils.has_toast_notification())
+                has_toast = self._cached_has_toast
+                if (
+                    self.physics.chasing_laser
+                    or self.physics.props
+                    or self.physics.falling
+                    or self.physics.perched
+                    or self.physics.paw_trails
+                    or has_toast
+                ):
+                    window_rect = window_utils.active_window_rect(ignore_hwnds=self._own_hwnds())
+                    taskbar_rect = window_utils.taskbar_rect()
+                    px, py = self.physics.step(
+                        dt, self.brain.x, self.brain.y,
+                        facing=getattr(self.brain, "facing", 1),
+                        pointer=pointer,
+                        window_rect=window_rect,
+                        taskbar_rect=taskbar_rect,
+                        has_toast=has_toast,
+                    )
+                    if (
+                        self.physics.chasing_laser
+                        or self.physics.in_box
+                        or self.physics.on_bed
+                        or self.physics.falling
+                        or self.physics.perched
+                        or self.physics.toast_curious
+                    ):
+                        self.brain.x, self.brain.y = px, py
+                self.brain.props = list(self.physics.props)
+                self.brain.paw_trails = list(self.physics.paw_trails)
+                self.brain.on_bed = self.physics.on_bed
+                self.brain.startled = self.physics.startled
+            except Exception:
+                logging.debug("DesktopPhysics step failed", exc_info=True)
+
+        if getattr(self, "fish_pond", None) is not None:
+            try:
+                self.fish_pond.step(dt)
+                self.brain.fishes = self.fish_pond.list_tasks()
+            except Exception:
+                logging.debug("TodoFishPond step failed", exc_info=True)
+
+        if getattr(self, "health_guard", None) is not None:
+            try:
+                reminder = self.health_guard.step(dt, is_working=True, pointer=pointer, now=now)
+                if reminder and self.settings.get("speech_bubbles", True):
+                    self.say_unsolicited(reminder["message"], 8)
+            except Exception:
+                logging.debug("HealthWaterGuard step failed", exc_info=True)
+
+        if self._frames % 60 == 0:
+            try:
+                self._step_weather()
+            except Exception:
+                logging.debug("Weather step failed", exc_info=True)
+
+        if self._frames % 300 == 0:
+            if getattr(self, "hardware_mind", None) is not None:
+                try:
+                    thermal = self.hardware_mind.evaluate()
+                    if thermal and self.settings.get("speech_bubbles", True):
+                        self.say_unsolicited(thermal["message"], 6)
+                except Exception:
+                    logging.debug("HardwareMind poll failed", exc_info=True)
+            if getattr(self, "dev_bridge", None) is not None:
+                try:
+                    for event in self.dev_bridge.poll():
+                        self._react_dev_event(event)
+                except Exception:
+                    logging.debug("DevBridge poll failed", exc_info=True)
+
+    def _react_dev_event(self, event):
+        """Commit/test olayı: animasyon her zaman, mesaj genel konuşma sınırıyla."""
+        self.command(event["command"])
+        if self.settings.get("speech_bubbles", True):
+            self.say_unsolicited(event["message"], 6)
 
     def _apply_activity_reaction(self, now):
         """Algılanan etkinlik değiştiğinde bir kez: sakin bir duruma geç, seyrek kısa mesaj."""
@@ -685,6 +1215,8 @@ class DesktopCat:
             logging.debug("could not persist position", exc_info=True)
         for mate in self.companions:
             mate.destroy()
+        if getattr(self, "toybox", None) is not None:
+            self.toybox.close()
         shortcut = getattr(self, "shortcut", None)
         if shortcut:
             shortcut.close()
@@ -693,6 +1225,14 @@ class DesktopCat:
             tray.close()
         if self.after_id is not None:
             self.root.after_cancel(self.after_id)
+        acoustic = getattr(self, "acoustic", None)
+        if acoustic is not None:
+            for sub in (getattr(acoustic, "lofi", None), getattr(acoustic, "tts", None)):
+                if sub is not None and callable(getattr(sub, "stop", None)):
+                    try:
+                        sub.stop()
+                    except Exception:
+                        pass
         self.assistant.close()
         self.bubble.destroy()
         self.root.destroy()

@@ -102,3 +102,99 @@ def place_window(window, x, y, w, h):
 def movement_bounds(area, w=WIDTH, h=HEIGHT):
     return Bounds(area.left, area.top, max(area.left, area.right - w),
                   max(area.top, area.bottom - h))
+
+
+def active_window_rect(ignore_hwnds=None):
+    """Return (left, top, right, bottom) of the foreground window, or None."""
+    if not IS_WINDOWS:
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        if ignore_hwnds is not None:
+            ignored = {ignore_hwnds} if isinstance(ignore_hwnds, int) else set(ignore_hwnds)
+            if hwnd in ignored:
+                return None
+        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return None
+        cls_buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, cls_buf, 64)
+        if cls_buf.value in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+            return None
+        rect = wintypes.RECT()
+        dwm_ok = False
+        try:
+            dwmapi = ctypes.windll.dwmapi
+            # DWMWA_EXTENDED_FRAME_BOUNDS = 9
+            hr = dwmapi.DwmGetWindowAttribute(
+                wintypes.HWND(hwnd),
+                wintypes.DWORD(9),
+                ctypes.byref(rect),
+                ctypes.sizeof(rect),
+            )
+            dwm_ok = (hr == 0)
+        except (AttributeError, OSError):
+            dwm_ok = False
+        if not dwm_ok and not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return None
+        if rect.right <= rect.left or rect.bottom <= rect.top:
+            return None
+        return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+    except (AttributeError, OSError):
+        return None
+
+
+def taskbar_rect():
+    """Return (left, top, right, bottom) of the Windows taskbar, or None."""
+    if not IS_WINDOWS:
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.FindWindowW("Shell_TrayWnd", None)
+        if not hwnd or not user32.IsWindowVisible(hwnd):
+            return None
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return None
+        if rect.right <= rect.left or rect.bottom <= rect.top:
+            return None
+        return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+    except (AttributeError, OSError):
+        return None
+
+
+def has_toast_notification():
+    """Return True if a visible Windows toast notification window is present."""
+    if not IS_WINDOWS:
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        if user32.FindWindowW("Windows.UI.Core.CoreWindow", "New notification"):
+            return True
+        found = False
+        cls_buf = ctypes.create_unicode_buffer(128)
+        title_buf = ctypes.create_unicode_buffer(128)
+        callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def check(hwnd, _lparam):
+            nonlocal found
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            user32.GetClassNameW(hwnd, cls_buf, 128)
+            user32.GetWindowTextW(hwnd, title_buf, 128)
+            cls_name = cls_buf.value
+            title = title_buf.value.lower()
+            if cls_name == "Windows.UI.Core.CoreWindow" and (
+                "notification" in title or "bildirim" in title or "toast" in title
+            ):
+                found = True
+                return False
+            return True
+
+        cb = callback_type(check)
+        user32.EnumWindows(cb, 0)
+        return found
+    except (AttributeError, OSError):
+        return False

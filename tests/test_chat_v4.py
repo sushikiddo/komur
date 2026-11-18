@@ -19,7 +19,7 @@ def make_bubble():
                             settings=SimpleNamespace(get=lambda key: False)),
         chat_log=[("Sen", "Merhaba"), ("Kömür", "Selam")], listening=False,
         show_history=lambda: calls.append("history"), toggle_listening=lambda: None,
-        share_screen=lambda: None, set_voice_enabled=lambda value: None,
+        share_screen=lambda: None, share_clipboard=lambda: None, set_voice_enabled=lambda value: None,
         send_text=lambda value: calls.append(("send", value)) or True,
         cancel_listening=lambda: calls.append("listen-stop"),
         voice=SimpleNamespace(stop=lambda: calls.append("voice-stop")),

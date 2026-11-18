@@ -215,7 +215,7 @@ def test_bubble_shows_partial_without_touching_chat_log():
         app=SimpleNamespace(root=root, brain=SimpleNamespace(x=300, y=300), w=140, h=150,
                             settings=SimpleNamespace(get=lambda key: False)),
         chat_log=[("Sen", "Merhaba")], listening=False, show_history=lambda: None,
-        toggle_listening=lambda: None, share_screen=lambda: None, set_voice_enabled=lambda v: None,
+        toggle_listening=lambda: None, share_screen=lambda: None, share_clipboard=lambda: None, set_voice_enabled=lambda v: None,
         send_text=lambda v: True)
     chat = ChatBubble(assistant)
     try:

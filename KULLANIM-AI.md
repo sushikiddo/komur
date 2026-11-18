@@ -4,7 +4,7 @@
 
 Kediye **çift tıklayın** veya sağ tık menüsünden **Kömür ile konuş** seçin. Kedinin yanında 292×224 piksellik mesaj baloncuğu açılır. Mesajınızı yazıp Enter'a basın. Sohbet açıkken kedi hareketini küçük bir alanla sınırlar; yazı alanı uzağa kaçmaz. **Dur** yeni işlem adımlarını ve sesli okumayı durdurur. Başlamış bir uygulama işlemini geri almaz; ağ yanıtının dönmesi zaman alabilir. Sohbeti kapatmak da durdurma isteği gönderir.
 
-**Geçmiş** düğmesi büyük pencereyi açar. Konuşma geçmişi sekmesinde eski konuşmaları görebilir ve arayabilirsiniz. Ayarlar ve kurulum sekmesinde AI, ses, paylaşım, görünüm, güncelleme ve geçmiş seçenekleri vardır. Davranış kontrol paneli sağ tık menüsünden veya Ctrl+Shift+K ile açılır. Escape küçük sohbeti gizler.
+**Geçmiş** düğmesi büyük pencereyi açar. Konuşma geçmişi sekmesinde eski konuşmaları görebilir ve arayabilirsiniz. Ayarlar ve kurulum sekmesinde AI, ses, paylaşım, görünüm, güncelleme ve geçmiş seçenekleri vardır. Davranış kontrol paneli sağ tık menüsünden veya Ctrl+Shift+K ile açılır; Ctrl+Shift+H patron tuşudur (kediyi ve panelleri gizler, sesi kısar). Escape küçük sohbeti gizler.
 
 ## Sakin hareket
 
@@ -123,7 +123,7 @@ Uygulama kapatma, bilgisayarı kapatma/yeniden başlatma, çöp kutusu boşaltma
 
 ## Başka bilgisayara kurma
 
-Paylaşılacak dosya **Komur-Setup-1.2.0-x64.exe** kurulum programıdır. Windows 10/11 64 bit desteklenir; alıcıda Python gerekmez. Kurulum kullanıcı hesabına yapılır, Başlat menüsü kısayolları ve kaldırıcı ekler. Kurulum yardımcısı model indirmelerini boyutlarıyla gösterir; indirme yalnız kullanıcının seçimi/onayıyla başlar. AI veya ses kurulmadan temel yazılı komutlar kullanılabilir. Önceki sürümün üzerine kurulum yapılabilir; kişisel veriler ayrı klasörde korunur.
+Paylaşılacak dosya **Komur-Setup-2.1-x64.exe** kurulum programıdır. Windows 10/11 64 bit desteklenir; alıcıda Python gerekmez. Kurulum kullanıcı hesabına yapılır, Başlat menüsü kısayolları ve kaldırıcı ekler. Kurulum yardımcısı model indirmelerini boyutlarıyla gösterir; indirme yalnız kullanıcının seçimi/onayıyla başlar. AI veya ses kurulmadan temel yazılı komutlar kullanılabilir. Önceki sürümün üzerine kurulum yapılabilir; kişisel veriler ayrı klasörde korunur.
 
 Kurulum paketi sizin sohbetlerinizi, notlarınızı, ayarlarınızı, API anahtarlarınızı veya indirilmiş modellerinizi içermez. Kaldırma kişisel hafızayı ve paylaşılan Ollama/model dosyalarını silmez; bunları ayrıca yönetebilirsiniz. Üçüncü taraf lisansları kurulumdaki `licenses` klasöründedir.
 

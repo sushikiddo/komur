@@ -34,8 +34,8 @@ FONT_FAMILY = "Segoe UI"
 FONT_SIZE = 11
 MAX_TEXT_WIDTH = 300              # px, wrap width of the text block
 MAX_CHARS = 600                   # beyond this the text is trimmed with "…"
-PAD_X, PAD_Y = 14, 10             # bubble padding around the text
-RADIUS = 12                       # corner radius
+PAD_X, PAD_Y = 16, 12             # bubble padding around the text
+RADIUS = 16                       # corner radius
 TAIL_W, TAIL_H = 18, 14           # tail base width / height
 GAP = 6                           # space between tail tip and the cat's head
 MARGIN = 2                        # canvas margin so the outline isn't clipped
@@ -43,11 +43,12 @@ HEAD_RATIO = 0.10                 # head top = anchor_y + HEAD_RATIO * cat_w
 MIN_SECONDS, MAX_SECONDS = 2.5, 30.0
 THINK_FRAMES = ("·", "· ·", "· · ·")
 
-FILL = "#fffdf7"
-BORDER = "#9aa8ab"
-SHADOW = "#c9d1d4"
-TEXT = "#27343b"
-THINK_TEXT = "#7a8790"
+FILL = "#161b22"
+BORDER = "#30363d"
+ACCENT_GLOW = "#58a6ff"
+SHADOW = "#090d12"
+TEXT = "#f0f6fc"
+THINK_TEXT = "#58a6ff"
 
 
 def default_duration(text):
@@ -222,6 +223,8 @@ class SpeechBubble:
         self._think_phase = -1
         self._think_item = None
         self._last_now = None
+        self._anim_start = None
+        self._float_dy = 0
 
     # -- public API ---------------------------------------------------------
     @property
@@ -242,10 +245,13 @@ class SpeechBubble:
         if seconds is None:
             seconds = default_duration(text)
         self.until = None if seconds == float("inf") else now + max(0.0, float(seconds))
+        newly_opened = not self._visible
         if text != self.text or self.thinking or not self._visible:
             self.text = text
             self.thinking = False
             self._layout_text()
+        if newly_opened:
+            self._start_float_in(now)
         self.update_position(anchor_x, anchor_y, cat_w)
         self._map()
 
@@ -255,11 +261,14 @@ class SpeechBubble:
             return
         now = time.monotonic() if now is None else now
         self.until = None if seconds is None else now + max(0.0, float(seconds))
+        newly_opened = not self._visible
         if not self.thinking or not self._visible:
             self.text = ""
             self.thinking = True
             self._think_phase = -1
             self._layout_thinking()
+        if newly_opened:
+            self._start_float_in(now)
         self.update_position(anchor_x, anchor_y, cat_w)
         self._map()
 
@@ -320,17 +329,33 @@ class SpeechBubble:
             self._size = (win_w, win_h)
             self.canvas.configure(width=win_w, height=win_h)
         self._pos = (win_x, win_y)
-        place_window(self.window, win_x, win_y, win_w, win_h)
+        place_window(self.window, win_x, win_y + self._float_dy, win_w, win_h)
 
     def tick(self, now=None):
         """Call every frame with ``time.monotonic()``: hides the bubble when its
-        duration expires and animates the thinking dots."""
+        duration expires and animates the thinking dots and float-in transition."""
         if self._destroyed or not self._visible:
             return
         now = time.monotonic() if now is None else now
         if self.until is not None and now >= self.until:
             self.hide()
             return
+        if self._anim_start is not None:
+            t_anim = min(1.0, max(0.0, (now - self._anim_start) / 0.18))
+            ease = 1.0 - (1.0 - t_anim) ** 3
+            try:
+                self.window.attributes("-alpha", 0.15 + 0.81 * ease)
+            except tk.TclError:
+                pass
+            float_dy = round((1.0 - ease) * 10)
+            if float_dy != self._float_dy:
+                self._float_dy = float_dy
+                wx, wy = self._pos
+                if wx is not None:
+                    place_window(self.window, wx, wy + float_dy, *self._size)
+            if t_anim >= 1.0:
+                self._anim_start = None
+                self._float_dy = 0
         if self.thinking:
             phase = int(now * 2.5) % len(THINK_FRAMES)
             if phase != self._think_phase:
@@ -348,6 +373,8 @@ class SpeechBubble:
         self.until = None
         self.text = ""
         self.thinking = False
+        self._anim_start = None
+        self._float_dy = 0
         try:
             self.window.withdraw()
         except tk.TclError:
@@ -364,6 +391,14 @@ class SpeechBubble:
             pass
 
     # -- internals ----------------------------------------------------------
+    def _start_float_in(self, now):
+        self._anim_start = now
+        self._float_dy = 10
+        try:
+            self.window.attributes("-alpha", 0.15)
+        except tk.TclError:
+            pass
+
     def _screen_bounds(self, x, y):
         if self.bounds is not None:
             try:
@@ -400,11 +435,29 @@ class SpeechBubble:
         ox = MARGIN + (TAIL_H if mode == "left" else 0)
         oy = MARGIN + (TAIL_H if mode == "up" else 0)
         pts = rounded_bubble_points(box_w, box_h, mode, tip)
-        shadow = [c + (ox + 2 if i % 2 == 0 else oy + 3) for p in pts for i, c in enumerate(p)]
+        shadow = [c + (ox + 2 if i % 2 == 0 else oy + 2) for p in pts for i, c in enumerate(p)]
         flat = [c + (ox if i % 2 == 0 else oy) for p in pts for i, c in enumerate(p)]
         self.canvas.create_polygon(*shadow, fill=SHADOW, outline="", tags=("shape",))
         self.canvas.create_polygon(*flat, fill=FILL, outline=BORDER, width=1.5,
                                    joinstyle="round", tags=("shape",))
+        # Upper inner rim neon glow highlight
+        r = max(2, min(RADIUS, box_w / 2 - 1, box_h / 2 - 1))
+        glow_y = oy + 2
+        gx1, gx2 = ox + r, ox + box_w - r
+        if gx2 > gx1:
+            if mode == "up":
+                half = TAIL_W / 2
+                tx = min(max(tip, r + half + 1), box_w - r - half - 1)
+                tx_abs = ox + tx
+                if tx_abs - half - 2 > gx1:
+                    self.canvas.create_line(gx1, glow_y, tx_abs - half - 2, glow_y,
+                                            fill=ACCENT_GLOW, width=1.5, capstyle="round", tags=("shape",))
+                if gx2 > tx_abs + half + 2:
+                    self.canvas.create_line(tx_abs + half + 2, glow_y, gx2, glow_y,
+                                            fill=ACCENT_GLOW, width=1.5, capstyle="round", tags=("shape",))
+            else:
+                self.canvas.create_line(gx1, glow_y, gx2, glow_y,
+                                        fill=ACCENT_GLOW, width=1.5, capstyle="round", tags=("shape",))
         self.canvas.tag_lower("shape")
         # text block sits at the padded origin
         self.canvas.coords("text", ox + PAD_X, oy + PAD_Y)
@@ -430,4 +483,4 @@ class SpeechBubble:
         # deiconify can reset position on some WMs; re-place without activating
         wx, wy = self._pos
         if wx is not None:
-            place_window(self.window, wx, wy, *self._size)
+            place_window(self.window, wx, wy + self._float_dy, *self._size)

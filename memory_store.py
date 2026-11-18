@@ -39,6 +39,16 @@ class MemoryStore:
             db.execute("""CREATE TABLE IF NOT EXISTS habits (
                 action TEXT NOT NULL, hour INTEGER NOT NULL, count INTEGER NOT NULL DEFAULT 0,
                 last_day INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(action, hour))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS dreams (
+                id INTEGER PRIMARY KEY, dream_text TEXT NOT NULL, source_summary TEXT,
+                created REAL NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS affection (
+                id INTEGER PRIMARY KEY CHECK (id = 1), xp INTEGER NOT NULL DEFAULT 0,
+                level INTEGER NOT NULL DEFAULT 1, updated REAL NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS fish_tasks (
+                id INTEGER PRIMARY KEY, title TEXT NOT NULL,
+                completed INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL)""")
+            db.execute("INSERT OR IGNORE INTO affection(id,xp,level,updated) VALUES(1,0,1,?)", (time.time(),))
             db.execute('PRAGMA user_version=3')
 
     @contextmanager
@@ -197,3 +207,90 @@ class MemoryStore:
         with self.connection() as db:
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             db.execute("VACUUM")
+
+    # -- rüyalar, sevgi bağı ve balık görevleri -------------------------------
+    def add_dream(self, dream_text, source_summary=""):
+        dream_text = redact(dream_text).strip()
+        if not dream_text or len(dream_text) > 4000:
+            raise ValueError("Rüya metni 1–4000 karakter olmalı.")
+        summary = redact(source_summary).strip()[:1000] if source_summary is not None else ""
+        with self.connection() as db:
+            result = db.execute(
+                "INSERT INTO dreams(dream_text,source_summary,created) VALUES(?,?,?)",
+                (dream_text, summary, time.time()),
+            )
+            return result.lastrowid
+
+    def latest_dream(self):
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT id,dream_text,source_summary,created FROM dreams ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+
+    def dreams(self, limit=10):
+        limit = max(1, min(100, int(limit)))
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT id,dream_text,source_summary,created FROM dreams ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_affection(self):
+        with self.connection() as db:
+            row = db.execute("SELECT id,xp,level,updated FROM affection WHERE id=1").fetchone()
+            if row is None:
+                now = time.time()
+                db.execute("INSERT OR IGNORE INTO affection(id,xp,level,updated) VALUES(1,0,1,?)", (now,))
+                row = db.execute("SELECT id,xp,level,updated FROM affection WHERE id=1").fetchone()
+        return dict(row)
+
+    def add_affection_xp(self, amount):
+        amount = int(amount)
+        if amount < 0:
+            raise ValueError("XP miktarı negatif olamaz.")
+        now = time.time()
+        with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO affection(id,xp,level,updated) VALUES(1,0,1,?)", (now,))
+            row = db.execute("SELECT xp,level FROM affection WHERE id=1").fetchone()
+            old_level = int(row["level"])
+            new_xp = int(row["xp"]) + amount
+            new_level = 1 + (new_xp // 100)
+            db.execute(
+                "UPDATE affection SET xp=?,level=?,updated=? WHERE id=1",
+                (new_xp, new_level, now),
+            )
+        return {
+            "id": 1,
+            "xp": new_xp,
+            "level": new_level,
+            "updated": now,
+            "leveled_up": new_level > old_level,
+        }
+
+    def add_fish_task(self, title):
+        title = redact(title).strip()
+        if not title or len(title) > 500:
+            raise ValueError("Balık görevi başlığı 1–500 karakter olmalı.")
+        with self.connection() as db:
+            result = db.execute(
+                "INSERT INTO fish_tasks(title,completed,created) VALUES(?,0,?)",
+                (title, time.time()),
+            )
+            return result.lastrowid
+
+    def pending_fish_tasks(self):
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT id,title,completed,created FROM fish_tasks WHERE completed=0 ORDER BY id ASC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def complete_fish_task(self, task_id):
+        with self.connection() as db:
+            result = db.execute(
+                "UPDATE fish_tasks SET completed=1 WHERE id=? AND completed=0",
+                (int(task_id),),
+            )
+            return result.rowcount > 0

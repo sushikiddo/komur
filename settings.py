@@ -57,6 +57,19 @@ DEFAULTS = {
     "habit_memory": True,         # alışkanlık sayacı + tek seferlik öneriler
     "update_check": True,         # günde en fazla bir kez GitHub'da yeni sürüm denetle (kurulum onaylı)
     "update_last_check": None,    # son denetim (time.time)
+    "persona": "asil_tembel",     # v2.0 kişilik şablonu
+    "retro_mode": False,          # v2.0 90'lar retro pixel filtresi
+    "age_days": 7.0,              # v2.0 büyüme/yaşlanma (gün)
+    "boss_key_mode": True,        # v2.0 Ctrl+Shift+H patron tuşu modu
+    "meow_subtitles": True,       # v2.0 kedi-insan altyazı çevirmeni
+    "lofi_ambience": False,       # v2.0 odak lofi ambiyansı
+    "affection_xp": 0,            # v2.0 dostluk XP
+    "affection_level": 1,         # v2.0 dostluk seviyesi
+    "weather_enabled": False,     # v2.2 gerçek hava durumu (açıkken şehir adı Open-Meteo'ya gider)
+    "weather_city": "",
+    "dev_repo_path": "",          # v2.2 geliştirici köprüsü: izlenen Git deposu ("" = çalışma dizini)
+    "rubber_duck_mode": False,    # v2.0 lastik ördek hata ayıklama modu
+    "natural_tts": True,          # v2.0 doğal Türkçe TTS zinciri
 }
 
 SIZE_SCALES = {"small": 0.55, "normal": 1.0, "large": 1.3, "xlarge": 1.6}

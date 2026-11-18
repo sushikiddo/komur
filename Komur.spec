@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
 
-hiddenimports = ['sounds', 'physics_particles', 'effect_orchestrator', 'needs', 'skins', 'settings', 'autostart', 'tray', 'behavior', 'renderer', 'plugin_loader', 'intents', 'ai_backends', 'window_utils', 'companion', 'panel', 'settings_ui', 'awareness', 'focus', 'updater', 'update_ui', 'version']
+hiddenimports = ['sounds', 'physics_particles', 'effect_orchestrator', 'needs', 'skins', 'settings', 'autostart', 'tray', 'behavior', 'renderer', 'plugin_loader', 'intents', 'ai_backends', 'window_utils', 'companion', 'panel', 'settings_ui', 'awareness', 'focus', 'updater', 'update_ui', 'version', 'desktop_physics', 'procedural_anim', 'acoustic_engine', 'persona_dreams', 'gamification_productivity', 'context_hud', 'dev_bridge', 'feline_locomotion', 'desktop_toys', 'weather', 'screen_vision']
 hiddenimports += collect_submodules('tkinter')
 hiddenimports += ['faster_whisper', 'sounddevice', 'ctranslate2', 'tokenizers', 'onnxruntime']
 
