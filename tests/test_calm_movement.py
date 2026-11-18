@@ -44,8 +44,10 @@ def test_explicit_wander_roams_whole_screen_at_old_speed():
     b.move_to(100, 600)
     b.command("wander")
     assert b._free_roam
+    b.target_x = b.x + 500   # uzak yatay hedef: tam hız ölçülür
     x0, y0 = b.x, b.y
     b.step(0.1)
+    assert b.y == y0          # serbest gezinme de yalnız yatay
     moved = math.hypot(b.x - x0, b.y - y0)
     assert moved == 0 or abs(moved - 5.2) < 0.01  # 52 px/s, not calm 30 px/s
 

@@ -65,3 +65,28 @@ def test_busy_and_empty_send_keep_expected_state():
     finally:
         chat.destroy()
         root.destroy()
+
+
+def test_compact_bubble_does_not_chase_cat_and_drags():
+    try:
+        root, assistant, calls, chat = make_bubble()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk unavailable: {exc}")
+    try:
+        assert chat.WIDTH <= 260 and chat.HEIGHT <= 180
+        chat.show()
+        first = chat._placed_at
+        assistant.app.brain.x += 120          # yakın: peşinden gitme
+        chat.update_position()
+        assert chat._placed_at == first
+        assistant.app.brain.x += 900          # uzak: yeniden konumlan
+        chat.update_position()
+        assert chat._placed_at != first
+        chat._drag_start(SimpleNamespace(x_root=chat.window.winfo_x() + 5, y_root=chat.window.winfo_y() + 5))
+        chat._drag_move(SimpleNamespace(x_root=chat.window.winfo_x() + 45, y_root=chat.window.winfo_y() + 25))
+        moved = chat._placed_at
+        chat.update_position()                # sürüklenen konum korunur
+        assert chat._placed_at == moved
+    finally:
+        chat.destroy()
+        root.destroy()

@@ -26,6 +26,8 @@ MESSAGES = {
     "hot": "Çok sıcak… serin bir yerde uzanayım. ☀️",
     "cold": "Hava buz gibi, kuyruğuma sarılıyorum. 🥶",
 }
+LABELS_TR = {"clear": "açık ☀️", "cloudy": "bulutlu ☁️", "fog": "sisli 🌫️", "rain": "yağmurlu 🌧️",
+             "snow": "karlı ❄️", "storm": "fırtınalı ⛈️", "hot": "çok sıcak 🔥", "cold": "buz gibi 🥶"}
 # Hava -> kedinin sakin duruşu (behavior.CatBrain.settle ile).
 SETTLE = {"rain": "sit", "storm": "groom", "snow": "groom", "fog": "yawn", "hot": "sleep", "cold": "groom"}
 
@@ -82,6 +84,26 @@ class WeatherWatcher:
         self._next_fetch = 0.0
         self._busy = False
         self._changed = False
+        self._announce = False
+
+    def describe(self):
+        """"Antalya: 18°C, açık ☀️" ya da henüz veri yoksa None."""
+        if self.condition is None:
+            return None
+        temp = f"{round(self.temp)}°C, " if isinstance(self.temp, (int, float)) else ""
+        return f"{self.place or self.city}: {temp}{LABELS_TR.get(self.condition, '')}".rstrip(", ")
+
+    def request_announce(self):
+        """Sıradaki (ya da hazırsa mevcut) sonucu take_announcement ile bir kez bildir."""
+        with self._lock:
+            self._announce = True
+
+    def take_announcement(self):
+        with self._lock:
+            if not self._announce or self.condition is None:
+                return None
+            self._announce = False
+        return self.describe()
 
     def set_city(self, city):
         with self._lock:
@@ -89,6 +111,7 @@ class WeatherWatcher:
             self.condition = self.temp = None
             self._next_fetch = 0.0
             self._changed = False
+            self._announce = bool(self.city)
 
     def poll(self, enabled):
         """Gerekirse arka plan yenilemesi başlat. Kapalıysa durumu temizler."""
@@ -131,6 +154,27 @@ class WeatherWatcher:
 
 def draw_weather(renderer, kind, t):
     """Kedinin başının üstünde küçük bulut + yağmur/kar (renderer'ın mantıksal 260x280 uzayında)."""
+    if kind == "clear":
+        bob = math.sin(t * 1.5) * 1.5
+        renderer._oval(108, 4 + bob, 128, 24 + bob, "#ffd84d", "#e0a800", 1)
+        for k in range(8):
+            a = t * 0.6 + k * math.pi / 4
+            renderer._line([(118 + math.cos(a) * 14, 14 + bob + math.sin(a) * 14),
+                            (118 + math.cos(a) * 19, 14 + bob + math.sin(a) * 19)], "#ffd84d", 2, smooth=False)
+        return
+    if kind == "hot":
+        renderer._oval(110, 6, 126, 22, "#ff8a3d", "#c85a10", 1)
+        return
+    if kind == "cold":
+        for k in range(3):
+            x = 100 + k * 16
+            renderer._line([(x - 5, 14), (x + 5, 14)], "#8ec8ff", 2, smooth=False)
+            renderer._line([(x, 9), (x, 19)], "#8ec8ff", 2, smooth=False)
+        return
+    if kind == "cloudy":
+        for cx, cy, r in ((106, 14, 11), (118, 9, 14), (131, 14, 10), (118, 17, 10)):
+            renderer._oval(cx - r, cy - r * 0.8, cx + r, cy + r * 0.8, "#dfe6ec", "#aab6c2", 1)
+        return
     if kind not in ("rain", "storm", "snow"):
         return
     cloud = "#5b6573" if kind == "storm" else "#c9d3dd"

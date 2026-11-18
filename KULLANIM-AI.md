@@ -2,7 +2,7 @@
 
 ## Kullanım
 
-Kediye **çift tıklayın** veya sağ tık menüsünden **Kömür ile konuş** seçin. Kedinin yanında 292×224 piksellik mesaj baloncuğu açılır. Mesajınızı yazıp Enter'a basın. Sohbet açıkken kedi hareketini küçük bir alanla sınırlar; yazı alanı uzağa kaçmaz. **Dur** yeni işlem adımlarını ve sesli okumayı durdurur. Başlamış bir uygulama işlemini geri almaz; ağ yanıtının dönmesi zaman alabilir. Sohbeti kapatmak da durdurma isteği gönderir.
+Kediye **orta tıklayın** (tekerleğe basın) veya sağ tık menüsünden **💬 Sohbet** kartını seçin. Kedinin yanında küçük (250×170) bir sohbet balonu açılır; başlığından tutup taşıyabilirsiniz. Sol tık kediyi sever. Mesajınızı yazıp Enter'a basın. Sohbet açıkken kedi hareketini küçük bir alanla sınırlar; yazı alanı uzağa kaçmaz. **Dur** yeni işlem adımlarını ve sesli okumayı durdurur. Başlamış bir uygulama işlemini geri almaz; ağ yanıtının dönmesi zaman alabilir. Sohbeti kapatmak da durdurma isteği gönderir.
 
 **Geçmiş** düğmesi büyük pencereyi açar. Konuşma geçmişi sekmesinde eski konuşmaları görebilir ve arayabilirsiniz. Ayarlar ve kurulum sekmesinde AI, ses, paylaşım, görünüm, güncelleme ve geçmiş seçenekleri vardır. Davranış kontrol paneli sağ tık menüsünden veya Ctrl+Shift+K ile açılır; Ctrl+Shift+H patron tuşudur (kediyi ve panelleri gizler, sesi kısar). Escape küçük sohbeti gizler.
 

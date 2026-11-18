@@ -45,13 +45,11 @@ COSTUME_LABELS = {
 PERSONA_LABELS = {
     "asil_tembel": "Asil / Tembel (INTJ)",
     "hiperaktif_yavru": "Hiperaktif Yavru (ENFP)",
-    "bilge_yazilimci": "Bilge Yazılımcı (INTP)",
 }
 
 _PERSONA_FALLBACK_DESC = {
     "asil_tembel": "Ağırbaşlı, biraz üstten bakan ama içten seven asil smokin kedi.",
     "hiperaktif_yavru": "Çok enerjik, her şeye şaşıran, meraklı ve bol oyun isteyen neşeli kedi.",
-    "bilge_yazilimci": "Kod mimarisi, temiz kod ve algoritmik espriler yapan kıdemli geliştirici kedi.",
 }
 
 
@@ -759,27 +757,7 @@ def build_persona_tab(app, nb: ttk.Notebook):
 
     persona_box.bind("<<ComboboxSelected>>", _on_select_persona)
 
-    card_modes = _make_card(tab, "ZEKA & HATA AYIKLAMA MODLARI")
-    duck_var = _ensure_var(
-        app, "rubber_duck_var",
-        lambda: tk.BooleanVar(value=bool(app.settings.get("rubber_duck_mode", False))),
-    )
-
-    def _on_duck_toggle():
-        if callable(getattr(app, "toggle_rubber_duck", None)):
-            active = bool(app.toggle_rubber_duck())
-            duck_var.set(active)
-        else:
-            app.settings.set("rubber_duck_mode", bool(duck_var.get()))
-
-    _make_toggle_row(
-        card_modes,
-        "Lastik Ördek Hata Ayıklama Modu",
-        duck_var,
-        _on_duck_toggle,
-        subtitle="Hazır kod yerine Sokratesçi sorularla hatayı buldurur",
-        on_color=ACCENT,
-    )
+    card_modes = _make_card(tab, "ZEKA MODLARI")
     _make_toggle_row(
         card_modes,
         "İhtiyaç & Ruh Hali Sistemi",

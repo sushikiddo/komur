@@ -123,7 +123,24 @@ class AssistantUI:
                 "screen_shared": bool(screen),
                 "untrusted_context": self.context_tainted or sharing,
                 "category": category if isinstance(category, str) else None,   # yalnız sınıf, başlık değil
-                "cat_state": self.cat_state_text()}
+                "cat_state": self.cat_state_text(),
+                "weather": self.weather_text()}
+
+    def weather_text(self):
+        """"Antalya 18°C açık" ya da hava izleyicisi kapalı/veri yoksa ""."""
+        watcher = getattr(getattr(self, "app", None), "weather", None)
+        condition = getattr(watcher, "condition", None)
+        if not condition:
+            return ""
+        try:
+            from weather import LABELS_TR
+            label = LABELS_TR.get(condition, "").split(" ")[0] or str(condition)
+        except ImportError:
+            label = str(condition)
+        temp = getattr(watcher, "temp", None)
+        temp_text = f" {round(temp)}°C" if isinstance(temp, (int, float)) else ""
+        place = (getattr(watcher, "place", "") or getattr(watcher, "city", "") or "").strip()[:40]
+        return f"{place}{temp_text} {label}".strip()
 
     def cat_state_text(self):
         """Kedinin kendi durumu (kullanıcı verisi değil): modele kısa bir satır."""
@@ -655,7 +672,7 @@ class AssistantUI:
                 else:
                     self.send_text(str(result))
             else:
-                self.append("Kömür", "Sözünü duyamadım. Konuş düğmesine basıp yeniden deneyebilirsin.")
+                self.append("Kömür", "Sözünü duyamadım. 🎤 düğmesine basıp yeniden deneyebilirsin.")
             return
         if kind == "reply":
             if self._cancel_requested:

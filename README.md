@@ -1,14 +1,14 @@
 # Kömür — Windows Masaüstü Kedisi ve AI Asistanı
 
-**Onur Can Orhan · Sürüm 2.2.1 · Windows 10/11 x64**
+**Onur Can Orhan · Sürüm 2.2.2 · Windows 10/11 x64**
 
 Kömür, masaüstünde yaşayan siyah-beyaz bir kediyle Türkçe yardımcıyı bir araya getiren Python uygulamasıdır. Kediyle etkileşime girebilir, yazı veya isteğe bağlı sesle konuşabilir, not ve hatırlatıcı oluşturabilir ve desteklenen bilgisayar işlemlerini başlatabilirsiniz.
 
 ## İndir ve kur
 
-- [Windows x64 kurulumu](https://github.com/sushikiddo/komur/releases/download/v2.2.1/Komur-Setup-2.2.1-x64.exe)
-- [SHA-256 dosyası](https://github.com/sushikiddo/komur/releases/download/v2.2.1/Komur-Setup-2.2.1-x64.exe.sha256)
-- [Özgün kaynak ZIP](https://github.com/sushikiddo/komur/releases/download/v2.2.1/Komur-Kaynak-v2.2.1.zip)
+- [Windows x64 kurulumu](https://github.com/sushikiddo/komur/releases/download/v2.2.2/Komur-Setup-2.2.2-x64.exe)
+- [SHA-256 dosyası](https://github.com/sushikiddo/komur/releases/download/v2.2.2/Komur-Setup-2.2.2-x64.exe.sha256)
+- [Özgün kaynak ZIP](https://github.com/sushikiddo/komur/releases/download/v2.2.2/Komur-Kaynak-v2.2.2.zip)
 - [Portfolyo](https://onurcanorhan.pages.dev/index.html)
 
 Kurulum dosyasının boyutu 142.334.673 bayt. Alıcıda Python gerekmez. Kurulum kullanıcı hesabına yapılır, Başlat menüsü kısayolları ve kaldırıcı ekler. Temel yazılı komutlar için AI modeli şart değildir. Yerel sohbet ve ses tanıma modelleri isteğe bağlıdır; ilk indirmeleri internet ve ilave disk alanı gerektirir.
@@ -16,14 +16,26 @@ Kurulum dosyasının boyutu 142.334.673 bayt. Alıcıda Python gerekmez. Kurulum
 Kurulum kod imzalı değildir; Windows yayımlayıcı/SmartScreen uyarısı gösterebilir. Hash eşleşmesi dosyanın aynı olduğunu gösterir; bağımsız güvenlik denetimi değildir.
 
 ~~~powershell
-Get-FileHash ./Komur-Setup-2.2.1-x64.exe -Algorithm SHA256
+Get-FileHash ./Komur-Setup-2.2.2-x64.exe -Algorithm SHA256
 ~~~
 
 Beklenen SHA-256:
 
 ~~~text
-79f51f25fe91d3d95a4e3dc362e717ffccd967b77dc280dbb4493c88a653618f
+6fc3539e4b091dd1ca314f4d6f1a01993c1d066efbacccf6822c153ecbeb91b3
 ~~~
+
+## 2.2.2 düzeltmeleri
+
+- **Yürüyüş:** Kedi artık havada çapraz ya da yukarı-aşağı yürümüyor; yatay yürüyor, yükseklik farkını kısa bir sıçramayla kapatıyor.
+- **Oyuncaklar:** Süt kasesi, tırmalama tahtası ve yumak konunca kedi hızla gidip kullanıyor (önceden çok yavaş ve seyrekti). Oyuncaklar kedinin zeminine düşüyor, havada kalmıyor.
+- **Kutu:** "📦 Kutu Bırak" artık sürüklenebilir bir karton kutu; kedi gidip içine oturuyor ya da uyukluyor, sonra çıkıyor (önceden kutuya kilitlenip takılıyordu).
+- **Pencereye tünemek:** Kedi tünediği pencereye kilitleniyor; kediye ya da menüye tıklayınca düşmüyor, pencere taşınınca onunla gidiyor, pencere kapanınca zemine iniyor.
+- **Hava durumu:** Açık ve bulutlu havada da kedinin başında simge var; şehir seçince sıcaklık ve durum hemen söyleniyor. Sohbette "hava nasıl" gerçek havayı söylüyor.
+- **Tıklama:** Sol tık kediyi sever (artık sohbet açmaz). Sohbet: orta tık ya da sağ tık → "💬 Sohbet".
+- **Sohbet balonu:** Daha küçük (250×170), simge düğmeli, başlığından taşınabilir; kedi yürürken peşinden kaymıyor.
+- **AI sohbeti:** "Bugün ne yapalım?", "Müzik açalım mı?" gibi sohbet cümleleri artık yanlışlıkla komut sanılmıyor; yanıtlar daha kısa ve doğal.
+- **Kaldırılanlar:** Geliştirici deposu köprüsü, lastik ördek, Git/terminal izleyicisi ve "Bilge Yazılımcı" kişiliği (bu kişilikteki ayar varsayılana geçer).
 
 ## 2.2.1 düzeltmesi
 
@@ -36,14 +48,13 @@ Beklenen SHA-256:
 - **Pano ve ekran açıklama:** Küçük sohbetteki "📋 Pano" düğmesi (ya da kediye sağ tık → "📋 Panoyu Açıkla") kopyaladığın hatayı, kodu veya metni tanıyıp açıklar; "🖥️ Ekran" artık hata ve kodu da ayırt eder. Claude API, OpenAI ve yerel modelle çalışır; AI yoksa hata satırını ve dosya:satır konumunu yerelde gösterir. Pano yalnız düğmeye bastığında okunur.
 - **Gerçek hava durumu (isteğe bağlı, varsayılan kapalı):** Kediye sağ tık → "🌦️ Hava Durumu". Açıkken yalnız şehir adı Open-Meteo'ya gider (30 dakikada bir). Yağmur, kar ve fırtınada kedinin başında küçük bir bulut belirir; hava değişince kedi sakin bir duruşa geçer.
 - **Masaüstü oyuncakları:** Kediye sağ tık → "🧶 İplik Yumağı", "🥛 Süt Kasesi", "🪵 Tırmalama": fareyle fırlatılabilen, ekran kenarlarından ve öndeki pencerenin tepesinden seken iplik yumağı (kedi koşup patiler); karnı acıkınca gidip içtiği süt kasesi; ara sıra gerinip tırmaladığı tırmalama tahtası.
-- **Geliştirici köprüsü:** Kediye sağ tık → "💻 Geliştirici Deposu". Commit'te dans, pytest patlayınca tıslama, testler yeşile dönünce mırlama (yalnız yerel .git ve .pytest_cache okunur).
 
 ## 2.1'de yenilikler
 
 - **Ses:** Dinamik mırlama, klavyeye tepki sesleri, doğal Türkçe konuşma zinciri; isteğe bağlı lofi odak ambiyansı (varsayılan kapalı).
 - **Masaüstü fiziği:** Pencere üstüne tünemek, görev çubuğu ve simgelerle etkileşim, imleç uykusu, pati izleri.
 - **Animasyon:** Yay fizikli kuyruk/kulak, bakış takibi, ifadeler, katmanlı kostümler, büyüme, retro filtre.
-- **Kişilik ve rüyalar:** Kişilik şablonları, yerel Ollama ile rüya motoru, lastik ördek modu, kedi dili altyazıları.
+- **Kişilik ve rüyalar:** Kişilik şablonları, yerel Ollama ile rüya motoru, kedi dili altyazıları.
 - **Verimlilik:** Kedi sepetine dosya/bağlantı bırakma, To-Do balık havuzu, dostluk seviyesi, su/sağlık hatırlatıcısı, patron tuşu.
 - **Hızlı eylemler:** Sağ tıkta koyu cam görünümlü HUD.
 
@@ -71,7 +82,7 @@ Beklenen SHA-256:
 
 ### Örnek kullanım
 
-1. Kediye çift tıklayın veya sağ tık → **Kömür ile konuş** seçin.
+1. Kediye orta tıklayın veya sağ tık → **💬 Sohbet** seçin. (Sol tık kediyi sever.)
 2. “Not defterini aç”, “sesi yüzde 30 yap”, “5 dakika sonra mola hatırlat” yazın.
 3. “Bunu hatırla: yeşili seviyorum” ile açıkça not kaydedin.
 4. “Uyu”, “uyan”, “yerde yuvarlan” ve “dans et” komutlarını deneyin.
@@ -143,7 +154,7 @@ Son betik Inno Setup 6 derleyicisi ve üretilmiş ana EXE gerektirir; lisans top
 
 ## Doğrulama ve sınırlar
 
-2.2.1 kaynağında 478 otomatik test geçti (1 atlandı; ara sıra görülen bir Tk zamanlama hatası tekrar koşuda geçiyor). Derlenmiş EXE duman testi ile kurulum/kaldırma denemesi geçti. Yeni masaüstü oyuncakları, hava durumu ve pano özellikleri canlı olarak elle denenmedi. Bunlar tüm özelliklerin her bilgisayarda çalıştığının kanıtı değildir. Gerçek video oynatırken mısır tepkisi ve gerçek mikrofonla "Hey Kömür" bu yayın hazırlığında elle denenmedi.
+2.2.2 kaynağında 509 otomatik test geçti (1 atlandı; ara sıra görülen bir Tk zamanlama hatası tekrar koşuda geçiyor). Derlenmiş EXE duman testi ile kurulum/kaldırma denemesi geçti. Oyuncaklar (kase, tahta, kutu, yumak), pencereye tünemek, hava durumu mesajı, sol tıkla sevme ve sohbet balonu konumu, uygulama içinden betikle canlı olarak denendi; fareyle sürükleme ve pano açıklaması elle denenmedi. Bunlar tüm özelliklerin her bilgisayarda çalıştığının kanıtı değildir. Bunlar tüm özelliklerin her bilgisayarda çalıştığının kanıtı değildir. Gerçek video oynatırken mısır tepkisi ve gerçek mikrofonla "Hey Kömür" bu yayın hazırlığında elle denenmedi.
 
 Temiz bir alıcı bilgisayarda tüm kurulum ve özellikler bu yayın hazırlığında uçtan uca denenmedi. İstemciyi açmak oyuna giriş veya indirmenin tamamlandığı anlamına gelmez. AI yanlış yanıt verebilir; ekran denetimleri tüm uygulamalarda bulunmaz.
 

@@ -7,6 +7,7 @@ Ekran koordinatları piksel, y aşağı doğru artar.
 from __future__ import annotations
 
 import math
+import random
 import time
 import tkinter as tk
 
@@ -14,8 +15,8 @@ GRAVITY = 1800.0
 BOUNCE = 0.55            # zemine/kenara çarpınca hızın korunan oranı
 ROLL_FRICTION = 0.985    # yerde yuvarlanırken kare başı yatay sönüm (60 FPS'e göre)
 REST_SPEED = 12.0
-SIZES = {"yarn": (36, 36), "bowl": (72, 34), "post": (46, 112)}
-LABELS = {"yarn": "İplik yumağı", "bowl": "Süt kasesi", "post": "Tırmalama tahtası"}
+SIZES = {"yarn": (36, 36), "bowl": (72, 34), "post": (46, 112), "box": (110, 60)}
+LABELS = {"yarn": "İplik yumağı", "bowl": "Süt kasesi", "post": "Tırmalama tahtası", "box": "Karton kutu"}
 
 
 class YarnPhysics:
@@ -61,24 +62,34 @@ class YarnPhysics:
 
 
 class ToyBrain:
-    """Kedinin oyuncaklara karşı kararları. Olaylar: {"action": "go"|"bat"|"drink"|"scratch", ...}."""
+    """Kedinin oyuncaklara karşı kararları. Olaylar: {"action": "go"|"bat"|"drink"|"scratch"|"box", ...}."""
 
     BAT_RANGE = 70.0
-    REACH_RANGE = 80.0
     PLAY_WINDOW = 25.0        # kullanıcı yumağı attıktan sonra kedinin ilgilendiği süre
+    INTEREST_WINDOW = 45.0    # kase/tahta/kutu konunca kedinin hemen gidip kullandığı süre
     DRINK_HUNGER = 55.0
-    DRINK_COOLDOWN = 600.0
-    SCRATCH_EVERY = 240.0
+    DRINK_COOLDOWN = 300.0
+    SCRATCH_EVERY = 180.0
+    DRINK_EVERY = 420.0
+    BOX_EVERY = 300.0
+    BOX_STAY = (20.0, 40.0)
     GO_COOLDOWN = 4.0
+    REACH = {"bowl": 60.0, "post": 60.0, "box": 30.0}
 
     def __init__(self):
         self.play_until = 0.0
         self._last_bat = self._last_go = float("-inf")
         self._last_drink = float("-inf")
-        self._last_scratch = 0.0     # açılışta hemen tırmalamasın
+        self.interest = {}       # kind -> ilgi penceresi bitişi
+        self.last_use = {}       # kind -> son kullanım/konma zamanı
 
     def user_threw(self, now):
         self.play_until = now + self.PLAY_WINDOW
+
+    def user_placed(self, kind, now):
+        """Kullanıcı oyuncağı koydu/bıraktı: kedi birkaç saniye içinde gidip kullansın."""
+        self.interest[kind] = now + self.INTEREST_WINDOW
+        self.last_use[kind] = now
 
     def decide(self, now, cat_center, cat_idle, hunger, toys):
         """``toys``: {kind: (cx, bottom)}. En fazla bir olay döner."""
@@ -92,20 +103,33 @@ class ToyBrain:
             if cat_idle and now - self._last_go > self.GO_COOLDOWN:
                 self._last_go = now
                 return {"action": "go", "kind": "yarn", "target": toys["yarn"]}
-        if "bowl" in toys and hunger >= self.DRINK_HUNGER and now - self._last_drink > self.DRINK_COOLDOWN:
-            return self._approach("bowl", toys, now, cx, cy, cat_idle, "drink")
-        if "post" in toys and now - self._last_scratch > self.SCRATCH_EVERY:
-            return self._approach("post", toys, now, cx, cy, cat_idle, "scratch")
+        for kind, action in (("bowl", "drink"), ("post", "scratch"), ("box", "box")):
+            if kind in toys and self._due(kind, now, hunger):
+                event = self._approach(kind, toys, now, cx, cy, cat_idle, action)
+                if event:
+                    return event
         return None
+
+    def _due(self, kind, now, hunger):
+        if now < self.interest.get(kind, 0.0):
+            return True
+        last = self.last_use.setdefault(kind, now)
+        if kind == "bowl" and hunger >= self.DRINK_HUNGER and now - self._last_drink > self.DRINK_COOLDOWN:
+            return True
+        every = {"bowl": self.DRINK_EVERY, "post": self.SCRATCH_EVERY, "box": self.BOX_EVERY}[kind]
+        return now - last > every
 
     def _approach(self, kind, toys, now, cx, cy, cat_idle, action):
         tx, tb = toys[kind]
-        if abs(tx - cx) <= self.REACH_RANGE and abs(tb - cy) <= 200:
+        if abs(tx - cx) <= self.REACH[kind] and abs(tb - cy) <= 200:
+            self.interest[kind] = 0.0
+            self.last_use[kind] = now
             if action == "drink":
                 self._last_drink = now
-            else:
-                self._last_scratch = now
-            return {"action": action, "kind": kind}
+            event = {"action": action, "kind": kind}
+            if action == "box":
+                event["stay"] = random.uniform(*self.BOX_STAY)
+            return event
         if cat_idle and now - self._last_go > self.GO_COOLDOWN:
             self._last_go = now
             return {"action": "go", "kind": kind, "target": toys[kind]}
@@ -123,6 +147,8 @@ class _ToyWindow:
         self.canvas = tk.Canvas(self.win, width=self.w, height=self.h, bg=BG, highlightthickness=0)
         self.canvas.pack()
         self._drag = None
+        self.falling = False
+        self.vy = 0.0
         self._on_throw = on_throw
         self.canvas.bind("<ButtonPress-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._motion)
@@ -147,6 +173,12 @@ class _ToyWindow:
         elif self.kind == "bowl":
             c.create_oval(4, 4, 68, 16, fill="#fbfbf6", outline="#9aa5b1", width=2)
             c.create_polygon(4, 10, 68, 10, 58, 32, 14, 32, fill="#4f7cac", outline="#2f4f73", width=2)
+        elif self.kind == "box":
+            c.create_rectangle(3, 14, 107, 58, fill="#c89b5c", outline="#8a6234", width=2)
+            c.create_rectangle(1, 8, 109, 20, fill="#d9ae70", outline="#8a6234", width=2)
+            c.create_rectangle(46, 8, 64, 30, fill="#e8d3a6", outline="#b09660")
+            c.create_line(10, 38, 100, 38, fill="#a97f45")
+            c.create_text(55, 47, text="KÖMÜR", fill="#7a5428", font=("Segoe UI", 8, "bold"))
         else:
             c.create_rectangle(4, 100, 42, 110, fill="#8a5a33", outline="#5c3a1e", width=2)
             c.create_rectangle(15, 4, 31, 100, fill="#d9b779", outline="#9c7b45", width=2)
@@ -154,6 +186,7 @@ class _ToyWindow:
                 c.create_line(15, yy, 31, yy + 5, fill="#9c7b45")
 
     def _press(self, event):
+        self.falling = False
         self._drag = [(time.monotonic(), event.x_root, event.y_root)]
 
     def _motion(self, event):
@@ -190,6 +223,8 @@ class ToyBox:
         self.yarn: YarnPhysics | None = None
         self.brain = ToyBrain()
         self.visible = True
+        self.box_until = 0.0
+        self._lift_at = 0.0
 
     def has(self, kind):
         return kind in self.toys
@@ -200,6 +235,8 @@ class ToyBox:
             self.toys.pop(kind).destroy()
             if kind == "yarn":
                 self.yarn = None
+            if kind == "box":
+                self.box_until = 0.0
             return False
         w, h = SIZES[kind]
         toy = _ToyWindow(self.master, kind, x - w / 2, y - h, self._on_throw)
@@ -208,6 +245,9 @@ class ToyBox:
             self.yarn = YarnPhysics(x, y - h / 2, radius=w / 2)
             self.yarn.push(-260.0, -500.0)
             self.brain.user_threw(time.monotonic())
+        else:
+            self.brain.user_placed(kind, time.monotonic())
+            toy.falling = True      # havada kalmasın: zemine düşsün
         return True
 
     def anchors(self):
@@ -219,6 +259,10 @@ class ToyBox:
             self.yarn.x, self.yarn.y = toy.x + toy.w / 2, toy.y + toy.h / 2
             self.yarn.push(max(-1600, min(1600, vx)), max(-1600, min(1600, vy)))
             self.brain.user_threw(time.monotonic())
+        elif toy.kind != "yarn":
+            toy.falling = True
+            toy.vy = 0.0
+            self.brain.user_placed(toy.kind, time.monotonic())
 
     def set_visible(self, visible):
         if visible == self.visible:
@@ -227,8 +271,37 @@ class ToyBox:
         for toy in self.toys.values():
             (toy.win.deiconify if visible else toy.win.withdraw)()
 
+    def _fall_static(self, dt, ground_y):
+        for toy in self.toys.values():
+            if toy.kind == "yarn" or not toy.falling or toy._drag is not None:
+                continue
+            toy.vy += GRAVITY * dt
+            toy.y += toy.vy * dt
+            if toy.y + toy.h >= ground_y:
+                toy.y, toy.vy, toy.falling = ground_y - toy.h, 0.0, False
+            toy.place()
+
+    def _update_box(self, now, event):
+        toy = self.toys.get("box")
+        if toy is None:
+            return
+        if event and event["action"] == "box":
+            self.box_until = now + event.get("stay", 25.0)
+            self._lift_at = 0.0
+        if now < self.box_until:
+            if now >= self._lift_at:       # kutu kedinin önüne geçsin: alt gövde kutunun içinde kalır
+                toy.win.lift()
+                self._lift_at = now + 1.0
+        elif self.box_until:
+            self.box_until = 0.0
+            try:
+                self.master.lift()          # çıkınca kedi yine önde
+            except tk.TclError:
+                pass
+
     def step(self, dt, now, area, platforms, cat_center, cat_idle, hunger):
         """Yumağı ilerlet, pencereleri taşı; kedi için en fazla bir olay döndür."""
+        self._fall_static(dt, area[3])
         if self.yarn is not None and "yarn" in self.toys:
             toy = self.toys["yarn"]
             if toy._drag is None and self.yarn.step(dt, area, platforms):
@@ -238,6 +311,7 @@ class ToyBox:
         event = self.brain.decide(now, cat_center, cat_idle, hunger, self.anchors())
         if event and event["action"] == "bat" and self.yarn is not None:
             self.yarn.push(event["vx"], event["vy"])
+        self._update_box(now, event)
         return event
 
     def close(self):

@@ -44,7 +44,7 @@ class ModernContextHUD:
     """
 
     WIDTH = 316
-    HEIGHT = 482   # 7 kart satırı (2 sütun) + başlık + alt düğmeler
+    HEIGHT = 500   # 13 kart = 7 satır (2 sütun) + başlık + alt düğmeler + ipucu satırı
 
     def __init__(self, app):
         self.app = app
@@ -185,20 +185,19 @@ class ModernContextHUD:
         grid.columnconfigure(1, weight=1, uniform="cards")
 
         cards = [
+            ("chat", "💬 Sohbet", lambda: self._call("open_chat")),
             ("fish", "🐟 Balık Avı", self._action_fish),
             ("box", "📦 Kutu Bırak", self._action_box),
             ("laser", "🔴 Lazer Aç", self._action_laser),
             ("perch", "🪟 Pencereye Tüne", self._action_perch),
             ("accessory", "👓 Aksesuarlar", self._action_accessory),
             ("lofi", "☕ Odak / Lofi", self._action_lofi_focus),
-            ("duck", "🦆 Lastik Ördek", self._action_rubber_duck),
             ("panel", "⚙️ Kontrol Paneli", self._action_panel),
             ("yarn", "🧶 İplik Yumağı", lambda: self._call("toggle_toy", "yarn")),
             ("bowl", "🥛 Süt Kasesi", lambda: self._call("toggle_toy", "bowl")),
             ("post", "🪵 Tırmalama", lambda: self._call("toggle_toy", "post")),
             ("clipboard", "📋 Panoyu Açıkla", lambda: self._call("explain_clipboard")),
             ("weather", "🌦️ Hava Durumu", lambda: self._call("choose_weather_city")),
-            ("devrepo", "💻 Geliştirici Deposu", lambda: self._call("choose_dev_repo")),
         ]
 
         for idx, (key, label, callback) in enumerate(cards):
@@ -276,6 +275,9 @@ class ModernContextHUD:
             pill.bind("<Enter>", lambda _e, p=pill, hb=hover_bg: p.configure(bg=hb, fg=TEXT))
             pill.bind("<Leave>", lambda _e, p=pill, fc=fg_color: p.configure(bg=SURFACE, fg=fc))
             self.pill_buttons[key] = pill
+        tk.Label(
+            self.body, text="Orta tık: sohbet · Sol tık: sev", bg=FILL, fg=MUTED, font=("Segoe UI", 8),
+        ).pack(pady=(5, 0))
 
     # -- lifecycle ----------------------------------------------------------
     def show(self, x_root: int, y_root: int):
@@ -451,11 +453,6 @@ class ModernContextHUD:
         focus_fn = getattr(self.app, "toggle_focus", None)
         if callable(focus_fn):
             focus_fn()
-
-    def _action_rubber_duck(self):
-        fn = getattr(self.app, "toggle_rubber_duck", None)
-        if callable(fn):
-            fn()
 
     def _call(self, name, *args):
         fn = getattr(self.app, name, None)

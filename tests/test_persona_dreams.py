@@ -7,11 +7,9 @@ import pytest
 from memory_store import MemoryStore
 from persona_dreams import (
     DreamEngine,
-    GitTerminalWatcher,
     HardwareMind,
     MeowTranslator,
     PERSONA_TEMPLATES,
-    RubberDuckDebugger,
     build_persona_prompt,
     get_persona,
     list_personas,
@@ -182,98 +180,15 @@ def test_dream_engine_uses_callback_and_ollama_when_available(tmp_path):
 # PERSONA_TEMPLATES
 # ---------------------------------------------------------------------------
 def test_persona_templates_and_prompt_builder():
-    assert set(PERSONA_TEMPLATES.keys()) == {"asil_tembel", "hiperaktif_yavru", "bilge_yazilimci"}
+    assert set(PERSONA_TEMPLATES.keys()) == {"asil_tembel", "hiperaktif_yavru"}
     assert PERSONA_TEMPLATES["asil_tembel"]["mbti"] == "INTJ"
     assert PERSONA_TEMPLATES["hiperaktif_yavru"]["mbti"] == "ENFP"
-    assert PERSONA_TEMPLATES["bilge_yazilimci"]["mbti"] == "INTP"
 
-    assert len(list_personas()) == 3
+    assert len(list_personas()) == 2
     assert get_persona("unknown")["id"] == "asil_tembel"
-    prompt = build_persona_prompt("bilge_yazilimci", "Sen Kömür'sün.")
+    prompt = build_persona_prompt("hiperaktif_yavru", "Sen Kömür'sün.")
     assert "Sen Kömür'sün." in prompt
-    assert "INTP" in prompt
-
-
-# ---------------------------------------------------------------------------
-# RubberDuckDebugger
-# ---------------------------------------------------------------------------
-def test_rubber_duck_debugger_socratic_flow():
-    duck = RubberDuckDebugger()
-    assert duck.active is False
-
-    # Normal mesajda tetiklenmez
-    idle_res = duck.process_message("Selam Kömür, nasılsın?")
-    assert idle_res["active"] is False
-    assert idle_res["question"] is None
-
-    # Tetikleyiciler
-    for phrase in ("lastik ördek", "Rubber Duck", "Bu kod neden çalışmıyor?", "Hatayı bulamıyorum"):
-        assert RubberDuckDebugger.is_trigger(phrase) is True
-
-    res1 = duck.process_message("Lastik ördek aç, bu kod neden çalışmıyor?")
-    assert res1["active"] is True
-    assert res1["triggered"] is True
-    assert res1["step"] == 1
-    assert "?" in res1["question"]
-    assert "ASLA doğrudan hazır kod" in res1["system_prompt"]
-
-    res2 = duck.process_message("Liste boş dönüyor sanırım")
-    assert res2["active"] is True
-    assert res2["triggered"] is False
-    assert res2["step"] == 2
-    assert res2["question"] != res1["question"]
-
-    res_exit = duck.process_message("Tamam hatayı buldum!")
-    assert res_exit["active"] is False
-    assert res_exit["closed"] is True
-
-
-# ---------------------------------------------------------------------------
-# GitTerminalWatcher
-# ---------------------------------------------------------------------------
-def test_git_terminal_watcher_commit_dance_and_test_fail_hiss(tmp_path):
-    git_logs = tmp_path / ".git" / "logs"
-    git_logs.mkdir(parents=True)
-    head_file = git_logs / "HEAD"
-    head_file.write_text(
-        "0000000 1111111 Dev <d@example.com> 1700000000 +0300\tcommit (initial): init\n",
-        encoding="utf-8",
-    )
-
-    watcher = GitTerminalWatcher(tmp_path)
-    # İlk kontrol taban çizgisini alır
-    assert watcher.check_git() is None
-    assert watcher.check_git() is None
-
-    # Yeni commit eklendiğinde dans olayı döner
-    with head_file.open("a", encoding="utf-8") as fh:
-        fh.write("1111111 2222222 Dev <d@example.com> 1700000100 +0300\tcommit: feat slice4\n")
-
-    dance = watcher.check_git()
-    assert dance == {
-        "event": "commit_dance",
-        "state": "dance",
-        "emote": "heart",
-        "message": "Yeni commit! Kodlar tertemiz, kutlama dansı!",
-    }
-    assert watcher.check_git() is None
-
-    # Terminal hata algılama
-    for sample in (
-        ("FAIL: test_x", ""),
-        ("", "ValueError: something went wrong\nError"),
-        ("", "Traceback (most recent call last):\n  File 'a.py'"),
-        ("pytest failed (2 errors)", ""),
-    ):
-        hiss = watcher.check_terminal(title=sample[0], output=sample[1])
-        assert hiss == {
-            "event": "test_fail_hiss",
-            "state": "hiss",
-            "emote": "anger",
-            "message": "Fısss! Testler patlamış, bir bug kokusu alıyorum!",
-        }
-
-    assert watcher.check_terminal(title="PowerShell", output="6 passed in 0.12s") is None
+    assert "ENFP" in prompt
 
 
 # ---------------------------------------------------------------------------

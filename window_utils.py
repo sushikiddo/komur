@@ -6,6 +6,7 @@ Yaprak modül: cat.py, companion.py ve panel.py bunu kullanır; hiçbiri cat'i i
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 from ctypes import wintypes
 
@@ -91,9 +92,10 @@ def place_window(window, x, y, w, h):
                 wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                 ctypes.c_int, ctypes.c_int, wintypes.UINT,
             ]
-            hwnd = user32.GetParent(window.winfo_id()) or window.winfo_id()
-            user32.SetWindowPos(hwnd, None, x, y, w, h, 20)  # NOSIZE off: set both
-            return
+            hwnd = user32.GetParent(window.winfo_id())
+            if hwnd:   # harita öncesi çerçeve yok: aşağıdaki geometry yoluna düş
+                user32.SetWindowPos(hwnd, None, x, y, w, h, 20)  # NOSIZE off: set both
+                return
         except OSError:
             pass
     window.geometry(f"{w}x{h}+{x}+{y}")
@@ -104,46 +106,81 @@ def movement_bounds(area, w=WIDTH, h=HEIGHT):
                   max(area.top, area.bottom - h))
 
 
-def active_window_rect(ignore_hwnds=None):
-    """Return (left, top, right, bottom) of the foreground window, or None."""
+_SHELL_CLASSES = ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd")
+
+
+def _is_own_window(user32, hwnd):
+    """Pencere bu surece (Komur: kedi, HUD, balon, oyuncaklar) aitse True."""
+    try:
+        pid = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+        return int(pid.value) == os.getpid()
+    except (AttributeError, OSError, TypeError):
+        return False
+
+
+def _usable_hwnd(user32, hwnd, ignore=None):
+    if not hwnd or (ignore and hwnd in ignore) or _is_own_window(user32, hwnd):
+        return False
+    if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+        return False
+    cls_buf = ctypes.create_unicode_buffer(64)
+    user32.GetClassNameW(hwnd, cls_buf, 64)
+    return cls_buf.value not in _SHELL_CLASSES
+
+
+def _rect_of(user32, hwnd):
+    rect = wintypes.RECT()
+    dwm_ok = False
+    try:
+        # DWMWA_EXTENDED_FRAME_BOUNDS = 9
+        hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd), wintypes.DWORD(9), ctypes.byref(rect), ctypes.sizeof(rect))
+        dwm_ok = (hr == 0)
+    except (AttributeError, OSError):
+        dwm_ok = False
+    if not dwm_ok and not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    if rect.right <= rect.left or rect.bottom <= rect.top:
+        return None
+    return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+
+
+def _ignore_set(ignore_hwnds):
+    if ignore_hwnds is None:
+        return None
+    return {ignore_hwnds} if isinstance(ignore_hwnds, int) else set(ignore_hwnds)
+
+
+def foreground_hwnd(ignore_hwnds=None):
+    """On plandaki (kendi sureclerimiz haric) kullanilabilir pencerenin hwnd'si ya da None."""
     if not IS_WINDOWS:
         return None
     try:
         user32 = ctypes.windll.user32
         hwnd = user32.GetForegroundWindow()
-        if not hwnd:
-            return None
-        if ignore_hwnds is not None:
-            ignored = {ignore_hwnds} if isinstance(ignore_hwnds, int) else set(ignore_hwnds)
-            if hwnd in ignored:
-                return None
-        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
-            return None
-        cls_buf = ctypes.create_unicode_buffer(64)
-        user32.GetClassNameW(hwnd, cls_buf, 64)
-        if cls_buf.value in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
-            return None
-        rect = wintypes.RECT()
-        dwm_ok = False
-        try:
-            dwmapi = ctypes.windll.dwmapi
-            # DWMWA_EXTENDED_FRAME_BOUNDS = 9
-            hr = dwmapi.DwmGetWindowAttribute(
-                wintypes.HWND(hwnd),
-                wintypes.DWORD(9),
-                ctypes.byref(rect),
-                ctypes.sizeof(rect),
-            )
-            dwm_ok = (hr == 0)
-        except (AttributeError, OSError):
-            dwm_ok = False
-        if not dwm_ok and not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-            return None
-        if rect.right <= rect.left or rect.bottom <= rect.top:
-            return None
-        return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+        return int(hwnd) if _usable_hwnd(user32, hwnd, _ignore_set(ignore_hwnds)) else None
     except (AttributeError, OSError):
         return None
+
+
+def window_rect(hwnd):
+    """Belirli pencerenin (left, top, right, bottom) kutusu; kapali/kucultulmus/gorunmezse None."""
+    if not IS_WINDOWS or not hwnd:
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        if not _usable_hwnd(user32, hwnd):
+            return None
+        return _rect_of(user32, hwnd)
+    except (AttributeError, OSError):
+        return None
+
+
+def active_window_rect(ignore_hwnds=None):
+    """On plandaki pencerenin kutusu; Komur'un kendi pencereleri HER ZAMAN yok sayilir."""
+    hwnd = foreground_hwnd(ignore_hwnds)
+    return window_rect(hwnd) if hwnd else None
 
 
 def taskbar_rect():

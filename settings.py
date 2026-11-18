@@ -67,8 +67,6 @@ DEFAULTS = {
     "affection_level": 1,         # v2.0 dostluk seviyesi
     "weather_enabled": False,     # v2.2 gerçek hava durumu (açıkken şehir adı Open-Meteo'ya gider)
     "weather_city": "",
-    "dev_repo_path": "",          # v2.2 geliştirici köprüsü: izlenen Git deposu ("" = çalışma dizini)
-    "rubber_duck_mode": False,    # v2.0 lastik ördek hata ayıklama modu
     "natural_tts": True,          # v2.0 doğal Türkçe TTS zinciri
 }
 
@@ -92,6 +90,8 @@ class Settings:
         self._data = dict(DEFAULTS)
         if data:
             self._data.update({k: v for k, v in data.items() if k in DEFAULTS})
+        if self._data.get("persona") not in ("asil_tembel", "hiperaktif_yavru"):
+            self._data["persona"] = DEFAULTS["persona"]   # kaldırılan kişilikler (bilge_yazilimci) varsayılana göç eder
 
     @classmethod
     def load(cls):

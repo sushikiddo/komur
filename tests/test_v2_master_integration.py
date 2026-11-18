@@ -68,7 +68,6 @@ def test_settings_v2_defaults():
         "lofi_ambience": False,
         "affection_xp": 0,
         "affection_level": 1,
-        "rubber_duck_mode": False,
     }
     for key, val in expected.items():
         assert key in settings.DEFAULTS
@@ -81,9 +80,7 @@ def test_desktop_cat_initializes_all_v2_subsystems(desktop_app):
         "acoustic",
         "hardware_mind",
         "dream_engine",
-        "dev_bridge",
         "meow_translator",
-        "rubber_duck",
         "affection",
         "fish_pond",
         "basket",
@@ -145,13 +142,14 @@ def test_slice1_retro_costumes_growth_and_companion_social(desktop_app, monkeypa
 
 def test_slice2_physics_props_and_menu(desktop_app):
     assert desktop_app.toggle_box_prop() is True
-    assert any(p.kind == "box" for p in desktop_app.physics.props)
+    assert desktop_app.toybox.has("box")
     assert desktop_app.toggle_laser() is True
     assert desktop_app.physics.chasing_laser is True
 
     desktop_app._step_v2_subsystems(0.016, (120, 140), 100.0)
     assert desktop_app.toggle_laser() is False
     assert desktop_app.toggle_box_prop() is False
+    assert not desktop_app.toybox.has("box")
 
     # Verify v2.0 submenu exists on right-click menu
     end_idx = desktop_app.menu.index("end")
@@ -197,17 +195,7 @@ def test_slice3_acoustic_and_voice_tts_hook(desktop_app, monkeypatch):
     assert svc_off.speak("Merhaba") is False
 
 
-def test_slice4_persona_dreams_rubber_duck_and_translator(desktop_app):
-    assert desktop_app.toggle_rubber_duck() is True
-    assert desktop_app.rubber_duck.active is True
-    assert desktop_app.settings.get("rubber_duck_mode") is True
-
-    reply = desktop_app.rubber_duck.process_message("bu kod neden çalışmıyor")
-    assert reply["active"] is True and reply["question"]
-
-    assert desktop_app.toggle_rubber_duck() is False
-    assert desktop_app.rubber_duck.active is False
-
+def test_slice4_persona_dreams_and_translator(desktop_app):
     dream = desktop_app.dream_engine.generate_dream(is_sleeping=True, force=True)
     assert dream and dream["dream_text"]
 
@@ -263,8 +251,8 @@ def test_slice5_affection_basket_fish_boss_key_and_panel(desktop_app, monkeypatc
     assert desktop_app.panel is not None and desktop_app.panel.winfo_exists()
     panel.on_accessory_change(desktop_app, "cyberpunk_collar")
     assert desktop_app.settings.get("accessory") == "cyberpunk_collar"
-    panel.on_persona_change(desktop_app, "bilge_yazilimci")
-    assert desktop_app.settings.get("persona") == "bilge_yazilimci"
+    panel.on_persona_change(desktop_app, "hiperaktif_yavru")
+    assert desktop_app.settings.get("persona") == "hiperaktif_yavru"
     desktop_app.retro_var.set(True)
     panel.on_retro_change(desktop_app)
     assert desktop_app.settings.get("retro_mode") is True
@@ -274,7 +262,7 @@ def test_hud_cards_reach_v22_features(desktop_app, monkeypatch):
     """Sağ tık HUD'u yeni özelliklere gerçekten ulaşır (eski tk.Menu yalnız yedek)."""
     hud = desktop_app.context_hud
     assert hud is not None
-    for key in ("yarn", "bowl", "post", "clipboard", "weather", "devrepo"):
+    for key in ("yarn", "bowl", "post", "clipboard", "weather", "chat"):
         assert key in hud.action_buttons
     hud.action_buttons["yarn"].invoke()
     assert desktop_app.toybox.has("yarn")

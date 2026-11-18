@@ -1,5 +1,5 @@
 #define AppName "Kömür"
-#define AppVersion "2.2.1"
+#define AppVersion "2.2.2"
 #define AppPublisher "Kömür"
 
 [Setup]

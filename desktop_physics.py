@@ -112,7 +112,7 @@ class DesktopPhysics:
     """Masaüstü ortamı ile kedi arasındaki fizik ve etkileşim yöneticisi."""
 
     GRAVITY = 1800.0
-    SHAKE_SPEED_THRESHOLD = 900.0
+    SHAKE_SPEED_THRESHOLD = 5000.0   # normal pencere sürükleme takip edilir, yalnız sert sallama düşürür
     CURSOR_IDLE_THRESHOLD = 120.0
     PAW_TRAIL_LIFETIME = 2.0
     PAW_TRAIL_STEP_DIST = 24.0
@@ -120,6 +120,8 @@ class DesktopPhysics:
     TOAST_RUN_SPEED = 380.0
     CURSOR_MOVE_EPS = 2.0
     PROP_SNAP_RADIUS = 96.0
+    JUMP_SECONDS = 0.4
+    JUMP_HEIGHT = 70.0
 
     def __init__(self, cat_w=window_utils.WIDTH, cat_h=window_utils.HEIGHT, bounds=None):
         self.cat_w = float(cat_w)
@@ -136,6 +138,8 @@ class DesktopPhysics:
         self.falling = False
         self.perch_rect = None
         self.perch_offset_x = 0.0
+        self.perch_hwnd = None
+        self._jump = None
 
         self.icon_peek = False
         self.icon_slap = False
@@ -202,8 +206,8 @@ class DesktopPhysics:
             ):
                 self.emit_paw_trail(foot_x, foot_y, facing)
 
-    def perch_on_window(self, window_rect, cat_x=None):
-        """Jump onto the top edge of the given window rect."""
+    def perch_on_window(self, window_rect, cat_x=None, hwnd=None, animate=False):
+        """Jump onto the top edge of the given window rect (``hwnd`` kilitlenir; ``animate``: 0.4 sn zıplama yayı)."""
         rect = _normalize_rect(window_rect)
         if rect is None:
             return False
@@ -211,8 +215,13 @@ class DesktopPhysics:
         target_x = self.x if cat_x is None else float(cat_x)
         max_x = max(float(wl), float(wr) - self.cat_w)
         target_x = max(float(wl), min(max_x, target_x))
-        self.x = target_x
-        self.y = float(wt) - self.cat_h
+        self._jump = None
+        if animate:
+            self._jump = {"t": 0.0, "dur": self.JUMP_SECONDS, "x0": self.x, "y0": self.y, "x1": target_x}
+        else:
+            self.x = target_x
+            self.y = float(wt) - self.cat_h
+        self.perch_hwnd = hwnd
         self.vx = 0.0
         self.vy = 0.0
         self.perched = True
@@ -292,10 +301,9 @@ class DesktopPhysics:
         return self.slapped_icons[slot.index]
 
     def spawn_prop(self, kind, x, y):
-        """Spawn a desktop prop ('box', 'bed', or 'laser') at (x, y)."""
+        """Spawn a desktop prop ('bed' or 'laser') at (x, y). Kutu artık desktop_toys'ta."""
         norm_kind = str(kind).lower().strip()
         sizes = {
-            "box": (96.0, 72.0),
             "bed": (110.0, 56.0),
             "laser": (16.0, 16.0),
         }
@@ -318,17 +326,13 @@ class DesktopPhysics:
             self.in_box = False
             self.on_bed = False
             self.chasing_laser = False
-            if self.surface in ("box", "bed"):
+            if self.surface == "bed":
                 self.surface = "ground"
             return
         norm_kind = str(kind).lower().strip()
         self.props = [p for p in self.props if p.kind != norm_kind]
         if norm_kind == "laser":
             self.chasing_laser = False
-        if norm_kind == "box":
-            self.in_box = False
-            if self.surface == "box":
-                self.surface = "ground"
         if norm_kind == "bed":
             self.on_bed = False
             if self.surface == "bed":
@@ -351,14 +355,19 @@ class DesktopPhysics:
         if not self.slapped_icons:
             self.icon_slap = False
 
+    def _drop_from_perch(self):
+        self.perched = False
+        self.falling = True
+        self.perch_rect = None
+        self.perch_hwnd = None
+        self._jump = None
+        self.surface = "ground"
+        self.vy = 0.0
+
     def _update_perch(self, dt, window_rect):
         new_rect = _normalize_rect(window_rect)
-        if new_rect is None:
-            self.perched = False
-            self.falling = True
-            self.perch_rect = None
-            self.surface = "ground"
-            self.vy = 0.0
+        if new_rect is None or self.perch_rect is None:
+            self._drop_from_perch()
             return
         pl, pt, _, _ = self.perch_rect
         nl, nt, nr, _ = new_rect
@@ -366,18 +375,26 @@ class DesktopPhysics:
         dy = nt - pt
         speed = math.hypot(dx, dy) / dt if dt > 0 else 0.0
         if speed > self.SHAKE_SPEED_THRESHOLD:
-            self.perched = False
-            self.falling = True
-            self.perch_rect = None
-            self.surface = "ground"
-            self.vy = 0.0
+            self._drop_from_perch()
             self.startled = True
             self.startle_timer = max(self.startle_timer, 0.8)
             return
         max_x = max(float(nl), float(nr) - self.cat_w)
+        self.perch_rect = new_rect
+        jump = self._jump
+        if jump is not None:
+            jump["t"] += dt
+            jump["x1"] = max(float(nl), min(max_x, jump["x1"] + dx))
+            u = min(1.0, jump["t"] / jump["dur"])
+            ty = float(nt) - self.cat_h
+            self.x = jump["x0"] + (jump["x1"] - jump["x0"]) * u
+            self.y = jump["y0"] + (ty - jump["y0"]) * u - math.sin(math.pi * u) * self.JUMP_HEIGHT
+            if u >= 1.0:
+                self._jump = None
+            self.surface = "window_top"
+            return
         self.x = max(float(nl), min(max_x, self.x + dx))
         self.y = float(nt) - self.cat_h
-        self.perch_rect = new_rect
         self.surface = "window_top"
 
     def _update_cursor_nap(self, dt, pointer, bounds):
@@ -453,7 +470,6 @@ class DesktopPhysics:
 
         cat_cx = self.x + self.cat_w * 0.5
         cat_cy = self.y + self.cat_h * 0.5
-        matched_box = None
         matched_bed = None
         for prop in self.props:
             if not prop.active:
@@ -461,19 +477,10 @@ class DesktopPhysics:
             prop_cx = prop.x + prop.width * 0.5
             prop_cy = prop.y + prop.height * 0.5
             if math.hypot(cat_cx - prop_cx, cat_cy - prop_cy) <= self.PROP_SNAP_RADIUS:
-                if prop.kind == "box" and matched_box is None:
-                    matched_box = prop
-                elif prop.kind == "bed" and matched_bed is None:
+                if prop.kind == "bed" and matched_bed is None:
                     matched_bed = prop
 
-        if matched_box is not None:
-            self.in_box = True
-            self.on_bed = False
-            self.surface = "box"
-            self.active_prop = matched_box
-            self.x = matched_box.x + (matched_box.width - self.cat_w) * 0.5
-            self.y = matched_box.y + matched_box.height - self.cat_h
-        elif matched_bed is not None:
+        if matched_bed is not None:
             self.on_bed = True
             self.in_box = False
             self.surface = "bed"
@@ -483,7 +490,7 @@ class DesktopPhysics:
         else:
             self.in_box = False
             self.on_bed = False
-            if self.surface in ("box", "bed"):
+            if self.surface == "bed":
                 self.surface = "ground"
 
     def step(
@@ -517,7 +524,8 @@ class DesktopPhysics:
         prev_x, prev_y = self.x, self.y
 
         if window_rect is _UNSET:
-            window_rect = window_utils.active_window_rect()
+            window_rect = (window_utils.window_rect(self.perch_hwnd) if self.perched and self.perch_hwnd
+                           else window_utils.active_window_rect())
         if taskbar_rect is _UNSET:
             taskbar_rect = window_utils.taskbar_rect()
         else:

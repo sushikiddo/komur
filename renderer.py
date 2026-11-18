@@ -651,7 +651,7 @@ class CatRenderer:
         prev, self._walk_sample = self._walk_sample, (t, x, y)
         if prev is None or not 0.0 < t - prev[0] < 0.5:
             return None
-        return math.hypot(x - prev[1], y - prev[2]) / (t - prev[0]) / max(self.scale, 1e-6)
+        return abs(x - prev[1]) / (t - prev[0]) / max(self.scale, 1e-6)
 
     def _walk(self, t, state, pupil, speed=8.0, ground_speed=None):
         g = self.GROUND
