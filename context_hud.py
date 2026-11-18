@@ -44,7 +44,7 @@ class ModernContextHUD:
     """
 
     WIDTH = 316
-    HEIGHT = 368
+    HEIGHT = 482   # 7 kart satırı (2 sütun) + başlık + alt düğmeler
 
     def __init__(self, app):
         self.app = app
@@ -193,6 +193,12 @@ class ModernContextHUD:
             ("lofi", "☕ Odak / Lofi", self._action_lofi_focus),
             ("duck", "🦆 Lastik Ördek", self._action_rubber_duck),
             ("panel", "⚙️ Kontrol Paneli", self._action_panel),
+            ("yarn", "🧶 İplik Yumağı", lambda: self._call("toggle_toy", "yarn")),
+            ("bowl", "🥛 Süt Kasesi", lambda: self._call("toggle_toy", "bowl")),
+            ("post", "🪵 Tırmalama", lambda: self._call("toggle_toy", "post")),
+            ("clipboard", "📋 Panoyu Açıkla", lambda: self._call("explain_clipboard")),
+            ("weather", "🌦️ Hava Durumu", lambda: self._call("choose_weather_city")),
+            ("devrepo", "💻 Geliştirici Deposu", lambda: self._call("choose_dev_repo")),
         ]
 
         for idx, (key, label, callback) in enumerate(cards):
@@ -240,7 +246,7 @@ class ModernContextHUD:
             ("feed", "🍖 Mama", lambda: self._run_command("feed"), TEXT, HOVER),
             ("play", "🎾 Oyna", lambda: self._run_command("play"), TEXT, HOVER),
             ("sleep", "💤 Uyu", lambda: self._run_command("sleep"), TEXT, HOVER),
-            ("hide", "🕵️ Gizle", self._action_hide, MUTED, HOVER),
+            ("hide", "Gizle", self._action_hide, MUTED, HOVER),
             ("close", "✕ Kapat", self._action_close, MUTED, DANGER_HOVER),
         ]
 
@@ -257,14 +263,16 @@ class ModernContextHUD:
                 activeforeground=TEXT,
                 relief="flat",
                 bd=0,
-                padx=5,
+                padx=1,
                 pady=4,
                 highlightthickness=1,
                 highlightbackground=BORDER,
                 font=("Segoe UI", 8),
                 cursor="hand2",
             )
-            pill.pack(side="left", expand=True, fill="x", padx=(0 if idx == 0 else 2, 0))
+            # Eşit sütunlar: dar alanda hepsi orantılı küçülür, sağdakiler kesilmez.
+            row.columnconfigure(idx, weight=1, uniform="pill")
+            pill.grid(row=0, column=idx, sticky="ew", padx=(0 if idx == 0 else 2, 0))
             pill.bind("<Enter>", lambda _e, p=pill, hb=hover_bg: p.configure(bg=hb, fg=TEXT))
             pill.bind("<Leave>", lambda _e, p=pill, fc=fg_color: p.configure(bg=SURFACE, fg=fc))
             self.pill_buttons[key] = pill
@@ -448,6 +456,11 @@ class ModernContextHUD:
         fn = getattr(self.app, "toggle_rubber_duck", None)
         if callable(fn):
             fn()
+
+    def _call(self, name, *args):
+        fn = getattr(self.app, name, None)
+        if callable(fn):
+            fn(*args)
 
     def _action_panel(self):
         fn = getattr(self.app, "show_panel", None)

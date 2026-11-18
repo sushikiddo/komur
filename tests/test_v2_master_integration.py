@@ -268,3 +268,21 @@ def test_slice5_affection_basket_fish_boss_key_and_panel(desktop_app, monkeypatc
     desktop_app.retro_var.set(True)
     panel.on_retro_change(desktop_app)
     assert desktop_app.settings.get("retro_mode") is True
+
+
+def test_hud_cards_reach_v22_features(desktop_app, monkeypatch):
+    """Sağ tık HUD'u yeni özelliklere gerçekten ulaşır (eski tk.Menu yalnız yedek)."""
+    hud = desktop_app.context_hud
+    assert hud is not None
+    for key in ("yarn", "bowl", "post", "clipboard", "weather", "devrepo"):
+        assert key in hud.action_buttons
+    hud.action_buttons["yarn"].invoke()
+    assert desktop_app.toybox.has("yarn")
+    hud.action_buttons["yarn"].invoke()
+    assert not desktop_app.toybox.has("yarn")
+    asked = []
+    monkeypatch.setattr(desktop_app, "choose_weather_city", lambda: asked.append("weather"))
+    monkeypatch.setattr(desktop_app, "explain_clipboard", lambda: asked.append("clip"))
+    hud.action_buttons["weather"].invoke()
+    hud.action_buttons["clipboard"].invoke()
+    assert asked == ["weather", "clip"]
