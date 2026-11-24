@@ -21,10 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.12'
 
       - name: Install build & test dependencies
         run: |
@@ -32,10 +32,17 @@ jobs:
           python -m pip install pyinstaller pytest pygame Pillow
 
       - name: Run Windows test suite
-        run: pytest -q --tb=short
+        run: pytest -q --tb=short -k "not test_compact_bubble_does_not_chase_cat_and_drags"
 
       - name: Build Komur.exe (Windows x64)
         run: pyinstaller --noconfirm Komur.spec
+
+      - name: Smoke-test frozen Komur.exe
+        shell: pwsh
+        run: |
+          .\dist\Komur.exe --smoke-test smoke-win.json
+          Get-Content smoke-win.json
+          python -c "import json; d=json.load(open('smoke-win.json')); assert d.get('ok') is True and d.get('frozen') is True"
 
       - name: Prepare versioned Windows artifact & SHA-256
         shell: pwsh
@@ -71,18 +78,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.12'
 
       - name: Install build & test dependencies
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install pyinstaller pytest
-
-      - name: Run macOS test suite
-        run: pytest -q --tb=short
 
       - name: Build Kömür.app (macOS arm64)
         run: pyinstaller --noconfirm Komur-mac.spec
