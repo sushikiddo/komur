@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 CREATE_NO_WINDOW = 0x08000000 if IS_WINDOWS else 0
 
 log = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ def _known_folder(name: str) -> Path:
     mapping = {
         "desktop": Path(user) / "Desktop", "downloads": Path(user) / "Downloads",
         "documents": Path(user) / "Documents", "pictures": Path(user) / "Pictures",
-        "music": Path(user) / "Music", "videos": Path(user) / "Videos",
+        "music": Path(user) / "Music", "videos": Path(user) / ("Movies" if IS_MAC else "Videos"),
         "home": Path(user),
     }
     path = mapping.get(name, Path(user))
@@ -415,6 +416,114 @@ def power_status() -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# macOS yardımcıları (open, osascript, pmset, screencapture; test için enjekte edilebilir)
+# ---------------------------------------------------------------------------
+# Katalog anahtarı -> macOS uygulama adı (open -a). Listede olmayan Windows araçları Mac'te yok.
+MAC_APP_NAMES = {
+    "notepad": "TextEdit", "calc": "Calculator", "explorer": "Finder", "cmd": "Terminal",
+    "taskmgr": "Activity Monitor", "settings": "System Settings", "control": "System Settings",
+    "chrome": "Google Chrome", "edge": "Microsoft Edge", "firefox": "Firefox", "discord": "Discord",
+    "steam": "Steam", "spotify": "Spotify", "vscode": "Visual Studio Code", "word": "Microsoft Word",
+    "excel": "Microsoft Excel", "powerpoint": "Microsoft PowerPoint", "obs": "OBS",
+    "whatsapp": "WhatsApp", "telegram": "Telegram", "minecraft": "Minecraft", "snipping": "Screenshot",
+    "paint": "Preview",
+}
+# Katalogda olmayan, Mac'e özgü Türkçe adlar (normalize edilmiş) -> uygulama adı
+MAC_EXTRA_ALIASES = {
+    "safari": "Safari", "finder": "Finder", "notlar": "Notes", "not uygulamasi": "Notes",
+    "takvim": "Calendar", "mesajlar": "Messages", "muzik": "Music", "apple music": "Music",
+    "fotograflar": "Photos", "haritalar": "Maps", "hatirlaticilar": "Reminders", "posta": "Mail",
+    "mail": "Mail", "app store": "App Store", "facetime": "FaceTime", "onizleme": "Preview",
+    "kisiler": "Contacts", "saat": "Clock", "xcode": "Xcode", "sistem ayarlari": "System Settings",
+}
+MAC_APP_DIRS = (Path("/Applications"), Path("/Applications/Utilities"), Path("/System/Applications"),
+                Path("/System/Applications/Utilities"), Path.home() / "Applications")
+
+
+def find_mac_app(name: str) -> str | None:
+    """Uygulama klasörlerinde adı eşleşen .app paketinin adı (``open -a`` için)."""
+    target = normalize(name)
+    if not target:
+        return None
+    for directory in MAC_APP_DIRS:
+        try:
+            for bundle in directory.glob("*.app"):
+                if normalize(bundle.stem) == target:
+                    return bundle.stem
+        except OSError:
+            continue
+    return None
+
+
+def resolve_mac_app(name: str) -> tuple[str, list[str]] | None:
+    """macOS: uygulama adını ``open -a`` komutuna çözer; kurulu değilse None. Hiçbir şey başlatmaz."""
+    key = resolve_app_key(name)
+    candidates = [MAC_APP_NAMES[key]] if key in MAC_APP_NAMES else []
+    candidates += [MAC_EXTRA_ALIASES.get(normalize(name), ""), name]
+    for candidate in candidates:
+        found = find_mac_app(candidate) if candidate else None
+        if found:
+            return ("exec", ["open", "-a", found])
+    return None
+
+
+def _osascript(script: str, timeout: float = 15.0) -> str:
+    proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=timeout,
+                          stdin=subprocess.DEVNULL)
+    if proc.returncode != 0:
+        raise OSError((proc.stderr or "osascript hatası").strip()[:200])
+    return proc.stdout.strip()
+
+
+def _applescript_text(value: str) -> str:
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _mac_keybd(vk: int, times: int = 1):
+    """Windows sanal tuş kodlarının macOS karşılığı: ses tuşları osascript ile; medya tuşları yok."""
+    if vk == VK_VOLUME_MUTE:
+        _osascript("set volume output muted not (output muted of (get volume settings))")
+    elif vk in (VK_VOLUME_UP, VK_VOLUME_DOWN):
+        delta = PCActions.VOLUME_STEP * max(1, int(times)) * (1 if vk == VK_VOLUME_UP else -1)
+        _osascript(f"set volume output volume ((output volume of (get volume settings)) + ({delta}))")
+    else:
+        raise OSError("Mac'te medya tuşlarını henüz kontrol edemiyorum")
+
+
+def _mac_empty_trash() -> int:
+    _osascript('tell application "Finder" to empty trash', timeout=120)
+    return 0
+
+
+def _mac_lock():
+    subprocess.run(["pmset", "displaysleepnow"], check=True, timeout=10, capture_output=True)
+
+
+def _mac_startfile(target: str):
+    subprocess.Popen(["open", str(target)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, close_fds=True)
+
+
+def mac_memory_status() -> dict | None:
+    try:
+        total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError):
+        return None
+    return {"total_gb": total / 2**30}
+
+
+def mac_power_status() -> dict | None:
+    try:
+        out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"(\d+)%", out)
+    if not match:
+        return {"ac": True, "battery_percent": None, "no_battery": True}
+    return {"ac": "AC Power" in out, "battery_percent": int(match.group(1)), "no_battery": False}
+
+
+# ---------------------------------------------------------------------------
 # PCActions
 # ---------------------------------------------------------------------------
 class PCActions:
@@ -427,12 +536,12 @@ class PCActions:
                  resolver=None, clock=None, riot_launcher=None, plugins: bool = True):
         self.runner = runner or _default_run
         self.popen = popen or _default_popen
-        self.startfile = startfile or (os.startfile if IS_WINDOWS else (lambda p: None))
-        self.keybd = keybd or _default_keybd
-        self.empty_bin = empty_bin or _default_empty_recycle_bin
-        self.lock = lock or _default_lock
+        self.startfile = startfile or (os.startfile if IS_WINDOWS else _mac_startfile if IS_MAC else (lambda p: None))
+        self.keybd = keybd or (_mac_keybd if IS_MAC else _default_keybd)
+        self.empty_bin = empty_bin or (_mac_empty_trash if IS_MAC else _default_empty_recycle_bin)
+        self.lock = lock or (_mac_lock if IS_MAC else _default_lock)
         self.on_timer = on_timer        # callable(spec: dict) — uygulama zamanlar
-        self.resolver = resolver or resolve_app
+        self.resolver = resolver or (resolve_mac_app if IS_MAC else resolve_app)
         self.clock = clock or _dt.datetime.now
         from riot_actions import launch_valorant
         self.riot_launcher = riot_launcher or launch_valorant
@@ -495,7 +604,9 @@ class PCActions:
         if spec is None:
             return f"Böyle bir eylem bilmiyorum: {name}"
         args = self._coerce_args(spec, args)
-        custom_app = name == "open_app" and resolve_app_key(str(args.get("name", ""))) is None
+        app_name = str(args.get("name", ""))
+        custom_app = (name == "open_app" and resolve_app_key(app_name) is None
+                      and not (IS_MAC and normalize(app_name) in MAC_EXTRA_ALIASES))
         if (spec.dangerous or custom_app) and not confirmed:
             return PendingAction(name=name, args=args, description=self.confirm_text(name, args))
         try:
@@ -550,7 +661,8 @@ class PCActions:
             "open_app", "Bir uygulamayı aç (not defteri, hesap makinesi, chrome, discord, steam, spotify, "
                         "vscode, valorant, görev yöneticisi, ayarlar vb.). Bilinmeyen adlar için de dener.",
             {"properties": {"name": s("Uygulama adı (Türkçe veya İngilizce)")}, "required": ["name"]},
-            self.open_app, keywords=("ac", "baslat", "calistir")))
+            self.open_app, keywords=("ac", "baslat", "calistir"),
+            confirm_text=lambda a: f"Tanımadığım bir uygulama: '{a.get('name', '')}'. Açmayı deneyeyim mi?"))
         self.register(ActionSpec("launch_game", "Adı verilen oyunu Riot veya Steam üzerinden başlat.",
                                  {"properties": {"game": s("Oyun adı")}, "required": ["game"]}, self.launch_game))
         self.register(ActionSpec("install_game", "Steam oyunu için kurulum isteği gönder; onay gerekir.",
@@ -635,6 +747,8 @@ class PCActions:
         if resolved is None:
             if key in ("valorant", "lol"):
                 return f"{label} açılamadı: resmi Riot istemcisi bulunamadı."
+            if IS_MAC:
+                return f"{label} bulunamadı. Uygulamalar klasöründe kurulu mu?"
             # son çare: os.startfile ile dene (kayıtlı uzantı/komut olabilir)
             try:
                 self.startfile(name)
@@ -715,6 +829,8 @@ class PCActions:
         return f"Bekliyor: Steam'e {title} kurulum isteği gönderildi; kurulum doğrulanmadı. Steam sahiplik veya onay isteyebilir."
 
     def close_app(self, name: str, force: bool = False) -> str:
+        if IS_MAC:
+            return self._close_mac_app(name, force)
         key = resolve_app_key(name)
         exe = APP_PROCESSES.get(key) if key else None
         if not exe:
@@ -728,6 +844,24 @@ class PCActions:
         if "not found" in (proc.stderr + proc.stdout).lower() or "bulunamadı" in (proc.stderr + proc.stdout).lower():
             return f"{label} zaten çalışmıyor."
         return f"{label} kapatılamadı: {(proc.stderr or proc.stdout).strip()[:120]}"
+
+    def _close_mac_app(self, name: str, force: bool) -> str:
+        key = resolve_app_key(name)
+        label = APP_LABELS.get(key, name)
+        resolved = self.resolver(name)
+        if resolved is None:
+            return f"{label} bulunamadı."
+        app = resolved[1][-1]
+        if force:
+            proc = self.runner(["pkill", "-x", app], 20)
+            return f"{label} zorla kapatıldı." if proc.returncode == 0 else f"{label} zaten çalışmıyor."
+        quoted = _applescript_text(app)
+        script = (f"if application {quoted} is running then\n"
+                  f"tell application {quoted} to quit\nreturn \"closed\"\nend if\nreturn \"idle\"")
+        proc = self.runner(["osascript", "-e", script], 20)
+        if proc.returncode != 0:
+            return f"{label} kapatılamadı: {(proc.stderr or proc.stdout).strip()[:120]}"
+        return f"{label} kapatıldı." if "closed" in proc.stdout else f"{label} zaten çalışmıyor."
 
     # web ---------------------------------------------------------------------
     def youtube_play(self, query: str) -> str:
@@ -780,12 +914,16 @@ class PCActions:
     def empty_recycle_bin(self) -> str:
         hr = self.empty_bin()
         if hr in (0, 0x8000FFFF):  # S_OK veya E_UNEXPECTED (zaten boş)
-            return "Geri dönüşüm kutusu boşaltıldı." if hr == 0 else "Geri dönüşüm kutusu zaten boştu."
+            bin_label = "Çöp sepeti" if IS_MAC else "Geri dönüşüm kutusu"
+            return f"{bin_label} boşaltıldı." if hr == 0 else f"{bin_label} zaten boştu."
         return f"Geri dönüşüm kutusu boşaltılamadı (hata 0x{hr:08X})."
 
     def set_volume(self, percent: int) -> str:
         """Mevcut seviye okunamaz (stdlib yok); önce sıfıra indirip hedefe kadar artırır."""
         percent = max(0, min(100, int(percent)))
+        if IS_MAC:
+            self.runner(["osascript", "-e", f"set volume output volume {percent}"], 10)
+            return f"Ses seviyesi %{percent} yapıldı."
         self.keybd(VK_VOLUME_DOWN, 50)
         ups = round(percent / self.VOLUME_STEP)
         if ups:
@@ -823,6 +961,12 @@ class PCActions:
         directory = self.screenshot_dir()
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"ekran_{self.clock().strftime('%Y%m%d_%H%M%S')}.png"
+        if IS_MAC:
+            proc = self.runner(["screencapture", "-x", str(path)], 30)
+            if proc.returncode == 0 and path.exists():
+                return f"Ekran görüntüsü kaydedildi: {path}"
+            return ("Ekran görüntüsü alamadım. Sistem Ayarları > Gizlilik ve Güvenlik > Ekran ve Sistem Sesi "
+                    "Kaydı'nda Terminal'e (veya Kömür'ü açan uygulamaya) izin ver.")
         try:
             from PIL import ImageGrab
         except ImportError:
@@ -851,8 +995,10 @@ class PCActions:
 
     def system_info(self) -> str:
         parts = []
-        mem = memory_status()
-        if mem:
+        mem = mac_memory_status() if IS_MAC else memory_status()
+        if mem and IS_MAC:
+            parts.append(f"RAM: {mem['total_gb']:.0f} GB")
+        elif mem:
             parts.append(f"RAM: %{mem['load']} dolu ({mem['avail_gb']:.1f} GB boş / {mem['total_gb']:.1f} GB)")
         parts.append(f"CPU: {os.cpu_count() or '?'} çekirdek")
         try:
@@ -861,7 +1007,7 @@ class PCActions:
             parts.append(f"Disk {root[:2]}: {usage.free / 2**30:.0f} GB boş / {usage.total / 2**30:.0f} GB")
         except OSError:
             pass
-        power = power_status()
+        power = mac_power_status() if IS_MAC else power_status()
         if power:
             if power["no_battery"] or power["battery_percent"] is None:
                 parts.append("Güç: prize bağlı")
@@ -909,7 +1055,15 @@ class PCActions:
         return f"Tamam, {human} sonra hatırlatırım: {spec['label']}"
 
     # shutdown ----------------------------------------------------------------
+    def _mac_power(self, verb: str, minutes: int, done: str) -> str:
+        if int(minutes) > 0:
+            return "Mac'te zamanlı kapatma yönetici izni istiyor; şimdilik yalnız hemen yapabilirim."
+        proc = self.runner(["osascript", "-e", f'tell application "System Events" to {verb}'], 20)
+        return done if proc.returncode == 0 else f"Olmadı: {(proc.stderr or proc.stdout).strip()[:120]}"
+
     def shutdown(self, minutes: int = 0) -> str:
+        if IS_MAC:
+            return self._mac_power("shut down", minutes, "Mac kapanıyor. Hoşça kal!")
         secs = max(0, int(minutes)) * 60
         proc = self.runner(["shutdown", "/s", "/t", str(secs)], 20)
         if proc.returncode != 0:
@@ -917,6 +1071,8 @@ class PCActions:
         return f"Bilgisayar {minutes} dakika sonra kapanacak. İptal için 'kapatmayı iptal et' de." if secs else "Bilgisayar kapanıyor. Hoşça kal!"
 
     def restart(self, minutes: int = 0) -> str:
+        if IS_MAC:
+            return self._mac_power("restart", minutes, "Mac yeniden başlatılıyor.")
         secs = max(0, int(minutes)) * 60
         proc = self.runner(["shutdown", "/r", "/t", str(secs)], 20)
         if proc.returncode != 0:
@@ -924,11 +1080,14 @@ class PCActions:
         return f"Bilgisayar {minutes} dakika sonra yeniden başlayacak." if secs else "Yeniden başlatılıyor."
 
     def cancel_shutdown(self) -> str:
+        if IS_MAC:
+            return "Zamanlanmış bir kapatma yoktu."
         proc = self.runner(["shutdown", "/a"], 20)
         return "Zamanlanmış kapatma iptal edildi." if proc.returncode == 0 else "Zamanlanmış bir kapatma yoktu."
 
     def run_command(self, command: str) -> str:
-        argv = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command]
+        argv = (["/bin/zsh", "-c", command] if IS_MAC else
+                ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command])
         proc = self.runner(argv, 60)
         out = (proc.stdout or "").strip()
         err = (proc.stderr or "").strip()

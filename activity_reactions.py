@@ -3,6 +3,7 @@ import json
 import os
 import queue
 import subprocess
+import sys
 import threading
 import time
 
@@ -27,8 +28,49 @@ if ($type -eq 'Video') { 'video' } elseif ($type -eq 'Music') { 'music' } else {
 
 _LAUNCHERS = ('steam', 'epicgameslauncher', 'riotclient', 'leagueclient', 'battle.net', 'gamingservices', 'goggalaxy', 'eaapp', 'eadesktop', 'ubisoftconnect')
 
+def _mac_running_app_names():
+    """macOS'ta çalışan uygulamaların adları (NSWorkspace, yeni uygulama başlatmaz)."""
+    try:
+        import window_utils
+        o = window_utils._objc_runtime()
+        ws = o.send(o.cls("NSWorkspace"), o.sel("sharedWorkspace"))
+        apps = o.items(o.send(ws, o.sel("runningApplications")))
+        sel_name = o.sel("localizedName")
+        return {o.to_str(o.send(a, sel_name)) for a in apps if a}
+    except Exception:
+        return set()
+
+
+def _mac_media_sessions():
+    """macOS'ta yalnız halihazırda açık olan Spotify/Music çalıyorsa oturum listesi döner."""
+    running = _mac_running_app_names()
+    sessions = []
+    for app_name, key in (("Spotify", "spotify"), ("Music", "applemusic")):
+        if app_name not in running:
+            continue
+        script = (
+            f'tell application "{app_name}" to '
+            'if player state is playing then return (name of current track) & "|||" & (artist of current track)'
+        )
+        try:
+            res = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True, text=True, timeout=2.0,
+            )
+            out = (res.stdout or "").strip()
+            if res.returncode == 0 and out:
+                title, _, artist = out.partition("|||")
+                sessions.append({"app": key, "type": "music", "title": title, "artist": artist})
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return sessions
+
+
 def media_playback(info=None):
     if os.name != 'nt':
+        if sys.platform == 'darwin':
+            sessions = _mac_media_sessions()
+            return 'music' if sessions else 'none'
         return 'none'
     try:
         result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', _SCRIPT],
@@ -133,6 +175,8 @@ class MediaSessionClient:
     def query(self):
         """Çalan oturumlar: [{'app','type','title','artist'}]; sorun olursa []."""
         if os.name != 'nt' and self._popen == self._default_popen:
+            if sys.platform == 'darwin':
+                return _mac_media_sessions()
             return []
         try:
             if self._proc is not None and self._proc.poll() is not None:

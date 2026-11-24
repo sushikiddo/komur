@@ -24,8 +24,21 @@ class HungryCatBrain(CatBrain):
         self._beg_cooldown = 0.0
         self._last_idle_purr = 0.0
 
+    _PROTECTED_ACTIVITY_STATES = frozenset({
+        "box_sit", "drink", "eat", "scratch", "perch", "jump", "laser_chase",
+    })
+
+    def settle(self, state):
+        """Etkinlik tepkisi: oyuncak/fizik aktivitelerini bölmeden sakin duruma geç."""
+        if self.state in self._PROTECTED_ACTIVITY_STATES:
+            return
+        super().settle(state)
+
     def _change(self, state, duration=None):
         """Extend CatBrain._change with new cat states."""
+        self.hide_internal_ball = False
+        self.visual_pose = None
+        self.visual_pose_duration = 0.0
         ranges = {
             "knead": (4.0, 6.0),
             "chirp": (1.5, 2.5),
@@ -40,9 +53,14 @@ class HungryCatBrain(CatBrain):
             "laser_chase": (4.0, 8.0),
             "thermal_bask": (5.0, 10.0),
             "startle": (0.6, 1.2),
+            "drink": (5.0, 7.0),
+            "eat": (3.5, 5.5),
+            "scratch": (4.5, 6.5),
+            "jump": (0.4, 0.6),
         }
         if state in ranges:
             self.state, self.elapsed = state, 0.0
+            self._goal = False
             lo, hi = ranges[state]
             self._duration = duration if duration is not None else self._rng.uniform(lo, hi)
             if state == "knead":
@@ -77,6 +95,10 @@ class HungryCatBrain(CatBrain):
             "laser_chase": (5.0, "Kırmızı nokta! Yakalayacağım!"),
             "thermal_bask": (6.0, "Sıcacık…"),
             "startle": (0.8, "Miyav! Korktum!"),
+            "drink": (6.0, "Lık lık lık… süt ne güzel!"),
+            "eat": (4.5, "Nom nom… çok lezzetli!"),
+            "scratch": (5.5, "Tırmalama zamanı! 🐾"),
+            "jump": (0.5, "Hop!"),
         }
         if name in commands:
             dur, msg = commands[name]

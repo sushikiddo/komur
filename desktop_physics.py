@@ -206,6 +206,19 @@ class DesktopPhysics:
             ):
                 self.emit_paw_trail(foot_x, foot_y, facing)
 
+    def _perch_y(self, window_top):
+        """Target top-left y when perched on ``window_top``.
+
+        Preserves exact ``window_top - cat_h`` whenever the cat fits inside the monitor's
+        visible top bound; when a window sits directly under the macOS menu bar, clamps y
+        so the cat perches visibly on top of the window's titlebar instead of off-screen.
+        """
+        raw = float(window_top) - self.cat_h
+        min_top = float(self.bounds[1])
+        if raw >= min_top:
+            return raw
+        return max(min_top - self.cat_h * 0.08, raw)
+
     def perch_on_window(self, window_rect, cat_x=None, hwnd=None, animate=False):
         """Jump onto the top edge of the given window rect (``hwnd`` kilitlenir; ``animate``: 0.4 sn zıplama yayı)."""
         rect = _normalize_rect(window_rect)
@@ -220,7 +233,7 @@ class DesktopPhysics:
             self._jump = {"t": 0.0, "dur": self.JUMP_SECONDS, "x0": self.x, "y0": self.y, "x1": target_x}
         else:
             self.x = target_x
-            self.y = float(wt) - self.cat_h
+            self.y = self._perch_y(wt)
         self.perch_hwnd = hwnd
         self.vx = 0.0
         self.vy = 0.0
@@ -386,15 +399,19 @@ class DesktopPhysics:
             jump["t"] += dt
             jump["x1"] = max(float(nl), min(max_x, jump["x1"] + dx))
             u = min(1.0, jump["t"] / jump["dur"])
-            ty = float(nt) - self.cat_h
+            ty = self._perch_y(nt)
             self.x = jump["x0"] + (jump["x1"] - jump["x0"]) * u
-            self.y = jump["y0"] + (ty - jump["y0"]) * u - math.sin(math.pi * u) * self.JUMP_HEIGHT
+            arc_y = jump["y0"] + (ty - jump["y0"]) * u - math.sin(math.pi * u) * self.JUMP_HEIGHT
+            if float(nt) - self.cat_h < float(self.bounds[1]):
+                arc_y = max(float(self.bounds[1]) - self.cat_h * 0.15, arc_y)
+            self.y = arc_y
             if u >= 1.0:
                 self._jump = None
+                self.y = ty
             self.surface = "window_top"
             return
         self.x = max(float(nl), min(max_x, self.x + dx))
-        self.y = float(nt) - self.cat_h
+        self.y = self._perch_y(nt)
         self.surface = "window_top"
 
     def _update_cursor_nap(self, dt, pointer, bounds):

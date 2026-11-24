@@ -15,20 +15,21 @@ TYPING_SECONDS = 30.0   # bu kadar süredir girdi yoksa "klavye aktif" sayılmaz
 
 _LAUNCHERS = ('steam', 'epicgameslauncher', 'riotclient', 'leagueclient', 'battle.net', 'gamingservices',
               'goggalaxy', 'eaapp', 'eadesktop', 'ubisoftconnect')
-_BROWSERS = ('chrome', 'msedge', 'edge', 'firefox', 'opera', 'brave', 'vivaldi', 'yandex', 'arc', 'zen',
-             '308046b0af4a39cb')  # son: Firefox AUMID
-_MUSIC_APPS = ('spotify', 'musicbee', 'foobar2000', 'aimp', 'itunes', 'applemusic', 'music.ui', 'zunemusic',
+_BROWSERS = ('chrome', 'google chrome', 'safari', 'msedge', 'edge', 'microsoft edge', 'firefox', 'opera', 'brave',
+              'brave browser', 'vivaldi', 'yandex', 'arc', 'zen',
+              '308046b0af4a39cb')  # son: Firefox AUMID
+_MUSIC_APPS = ('spotify', 'musicbee', 'foobar2000', 'aimp', 'itunes', 'music', 'apple music', 'applemusic', 'music.ui', 'zunemusic',
                'deezer', 'tidal', 'amazonmusic', 'youtubemusic')
-_VIDEO_APPS = ('netflix', 'vlc', 'video.ui', 'zunevideo', 'kodi', 'disneyplus', 'primevideo', 'mpc-hc',
+_VIDEO_APPS = ('netflix', 'vlc', 'iina', 'tv', 'apple tv', 'quicktime player', 'quicktime', 'video.ui', 'zunevideo', 'kodi', 'disneyplus', 'primevideo', 'mpc-hc',
                'potplayer', 'mpv', 'hbo', 'twitch')
-_PLAYERS = ('vlc', 'mpc-hc', 'potplayer', 'mpv', 'kodi', 'netflix', 'wmplayer', 'video.ui', 'disneyplus')
-_VIDEO_TITLE = ('youtube', 'netflix', 'twitch', 'disney', 'prime video', 'hbo', ' izle')
+_PLAYERS = ('vlc', 'iina', 'tv', 'apple tv', 'quicktime player', 'quicktime', 'mpc-hc', 'potplayer', 'mpv', 'kodi', 'netflix', 'wmplayer', 'video.ui', 'disneyplus')
+_VIDEO_TITLE = ('youtube', 'netflix', 'twitch', 'disney', 'prime video', 'hbo', 'apple tv', ' izle')
 _MUSIC_TITLE = ('youtube music', 'spotify')
-_CALL_APPS = ('zoom', 'teams', 'msteams', 'discord', 'skype', 'webex', 'slack', 'whatsapp', 'telegram', 'signal')
+_CALL_APPS = ('zoom', 'zoom.us', 'teams', 'msteams', 'discord', 'skype', 'webex', 'slack', 'whatsapp', 'telegram', 'signal', 'facetime')
 _MEET_TITLE = ('meet -', 'meet.google', 'zoom meeting', 'microsoft teams', '| teams')
-_WRITING_APPS = ('winword', 'wordpad', 'notepad', 'onenote', 'obsidian', 'notion', 'soffice', 'libreoffice', 'wps')
+_WRITING_APPS = ('winword', 'microsoft word', 'wordpad', 'notepad', 'notes', 'pages', 'textedit', 'onenote', 'obsidian', 'notion', 'soffice', 'libreoffice', 'wps')
 _WRITING_HINTS = ('google docs',)
-_READING_APPS = ('acrord32', 'acrobat', 'sumatrapdf', 'foxitreader', 'kindle')
+_READING_APPS = ('acrord32', 'acrobat', 'sumatrapdf', 'foxitreader', 'kindle', 'preview', 'books')
 
 
 def _proc(info) -> str:
@@ -185,8 +186,8 @@ class Stabilizer:
 # state: kedi durumu adı; messages: seyrek, sakin Türkçe cümleler (boş = sessiz);
 # cooldown: aynı sınıf için iki mesaj arası en az saniye; still: kedi hareketsiz/sakin kalsın.
 REACTIONS = {
-    "video":   {"state": "watch",  "messages": ["Mısırım hazır, izleyelim.", "Ben de bakıyorum, rahat et."],
-                "cooldown": 600, "still": True},
+    "video":   {"state": "watch",  "messages": ["Köşeye çekildim, sessizce izliyorum.", "Kenarda kıvrıldım, rahat et."],
+                "cooldown": 600, "still": True, "corner": True},
     "music":   {"state": "dance",  "messages": ["Güzel şarkı...", "Bu parça hoşuma gitti."],
                 "cooldown": 600, "still": False, "dance_seconds": 20},   # kısa dans, sonra mırlama
     "gaming":  {"state": "focus",  "messages": [], "cooldown": 600, "still": True},
@@ -202,6 +203,7 @@ REACTIONS = {
 WELCOME_BACK = "Hoş geldin!"
 MIN_MESSAGE_GAP = 600        # aynı sınıf için kesin alt sınır (sn)
 WELCOME_COOLDOWN = 300
+_ACTIVE_CLASSES = frozenset({"coding", "writing", "reading", "music", "gaming", "meeting"})
 
 
 class ReactionPlanner:
@@ -221,10 +223,18 @@ class ReactionPlanner:
             return None
         entry = self.table.get(new) or self.table["none"]
         message = None
+        welcome_back = (old == 'away' and new != 'away') or (old == 'idle' and new in _ACTIVE_CLASSES)
         if old == 'away' and new != 'away' and self._may_speak('welcome', WELCOME_COOLDOWN, now):
             message = WELCOME_BACK
             self._last_msg['welcome'] = now
         elif entry["messages"] and self._may_speak(new, entry["cooldown"], now):
             message = self.rng.choice(entry["messages"])
             self._last_msg[new] = now
-        return {"class": new, "state": entry["state"], "message": message, "still": entry.get("still", False)}
+        return {
+            "class": new,
+            "from_class": old,
+            "state": entry["state"],
+            "message": message,
+            "still": entry.get("still", False),
+            "welcome_back": welcome_back,
+        }

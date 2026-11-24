@@ -1,10 +1,8 @@
 """Dilim 3: Akustik motor, 2D konumsal ses, dinamik mırıldanma, pitch-shift,
-yüzeye göre adım sesi, klavye reaktif sesleri, doğal Türkçe TTS,
-lofi odak ambiyansı ve mikrofon gürültüsü tepki sistemi.
+yüzeye göre adım sesi, klavye reaktif sesleri ve lofi odak ambiyansı.
 """
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
 import math
@@ -14,6 +12,7 @@ import random
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -31,11 +30,7 @@ PURR_MAX_FREQ = 34.0
 PURR_MIN_VOL = 0.2
 PURR_MAX_VOL = 0.9
 
-EDGE_TTS_VOICES = ("tr-TR-EmelNeural", "tr-TR-AhmetNeural")
-DEFAULT_EDGE_VOICE = "tr-TR-EmelNeural"
-DEFAULT_EDGE_PITCH = "+15Hz"
 
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 # ---------------------------------------------------------------------------
@@ -481,195 +476,6 @@ class KeyboardReactiveAudio:
 
 
 # ---------------------------------------------------------------------------
-# 6. Doğal Türkçe TTS (edge-tts -> piper-tts -> Windows SAPI fallback)
-# ---------------------------------------------------------------------------
-
-class NaturalTurkishTTS:
-    """Doğal Türkçe TTS zinciri:
-    1. Birincil: edge-tts (tr-TR-EmelNeural / tr-TR-AhmetNeural, pitch='+15Hz')
-    2. Çevrimdışı yedek: piper-tts CLI
-    3. Son çare: Windows SAPI (mevcut VoiceService)
-    """
-
-    def __init__(
-        self,
-        edge_voice: str = DEFAULT_EDGE_VOICE,
-        pitch: str = DEFAULT_EDGE_PITCH,
-        piper_bin: str = "piper",
-        piper_model: str | Path | None = None,
-        speech_rate: int = 0,
-        sapi_fallback: Callable[[str], bool] | None = None,
-        audio_player: Callable[[str], bool] | None = None,
-    ):
-        self.edge_voice = (
-            edge_voice if edge_voice in EDGE_TTS_VOICES else DEFAULT_EDGE_VOICE
-        )
-        self.pitch = pitch
-        self.piper_bin = piper_bin
-        self.piper_model = Path(piper_model) if piper_model else None
-        self.speech_rate = speech_rate
-        self._sapi_fallback = sapi_fallback
-        self._audio_player = audio_player
-        self._lock = threading.Lock()
-        self._stop_event = threading.Event()
-        self._sapi_service = None
-        self.last_backend: str | None = None
-
-    def _default_play_file(self, path: str) -> bool:
-        if pygame is not None:
-            try:
-                if not pygame.mixer.get_init():
-                    pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
-                pygame.mixer.music.load(path)
-                pygame.mixer.music.play()
-                while pygame.mixer.music.get_busy() and not self._stop_event.is_set():
-                    time.sleep(0.05)
-                if self._stop_event.is_set():
-                    pygame.mixer.music.stop()
-                return True
-            except Exception:
-                logging.debug("pygame TTS oynatma başarısız", exc_info=True)
-        return False
-
-    def _play_file(self, path: str) -> bool:
-        if self._audio_player is not None:
-            return bool(self._audio_player(path))
-        return self._default_play_file(path)
-
-    def _synthesize_edge_tts(self, text: str, output_path: str) -> bool:
-        try:
-            import edge_tts  # type: ignore
-        except Exception:
-            return False
-
-        async def _save() -> None:
-            comm = edge_tts.Communicate(text, voice=self.edge_voice, pitch=self.pitch)
-            await comm.save(output_path)
-
-        try:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                asyncio.run(_save())
-            else:
-                exc_holder: list[BaseException] = []
-
-                def _runner() -> None:
-                    try:
-                        asyncio.run(_save())
-                    except BaseException as exc:
-                        exc_holder.append(exc)
-
-                t = threading.Thread(target=_runner, daemon=True)
-                t.start()
-                t.join(timeout=20)
-                if exc_holder:
-                    raise exc_holder[0]
-            return os.path.isfile(output_path) and os.path.getsize(output_path) > 0
-        except Exception:
-            logging.debug("edge-tts başarısız oldu, yedeğe geçiliyor", exc_info=True)
-            return False
-
-    def _synthesize_piper_tts(self, text: str, output_path: str) -> bool:
-        if self.piper_model is None or not self.piper_model.is_file():
-            return False
-        exe = (
-            self.piper_bin
-            if os.path.isfile(self.piper_bin)
-            else shutil.which(self.piper_bin)
-        )
-        if not exe:
-            return False
-        try:
-            subprocess.run(
-                [exe, "--model", str(self.piper_model), "--output_file", output_path],
-                input=text,
-                text=True,
-                encoding="utf-8",
-                capture_output=True,
-                timeout=20,
-                check=True,
-                creationflags=_NO_WINDOW,
-            )
-            return os.path.isfile(output_path) and os.path.getsize(output_path) > 0
-        except Exception:
-            logging.debug("piper-tts başarısız oldu, SAPI yedeğine geçiliyor", exc_info=True)
-            return False
-
-    def _speak_sapi(self, text: str) -> bool:
-        if self._sapi_fallback is not None:
-            return bool(self._sapi_fallback(text))
-        try:
-            from voice import VoiceService
-
-            if self._sapi_service is None:
-                self._sapi_service = VoiceService(speech_rate=self.speech_rate)
-            return bool(self._sapi_service.speak(text))
-        except Exception:
-            logging.debug("SAPI fallback başarısız", exc_info=True)
-            return False
-
-    def speak_sync(self, text: str) -> str | None:
-        """Metni seslendirir ve kullanılan motoru ('edge-tts'|'piper-tts'|'sapi'|None) döndürür."""
-        clean = str(text or "").strip()
-        if not clean:
-            return None
-        self._stop_event.clear()
-
-        with tempfile.TemporaryDirectory(prefix="komur_tts_") as tmpdir:
-            mp3_path = os.path.join(tmpdir, "speech.mp3")
-            if self._synthesize_edge_tts(clean, mp3_path):
-                if self._play_file(mp3_path):
-                    self.last_backend = "edge-tts"
-                    return "edge-tts"
-
-            wav_path = os.path.join(tmpdir, "speech.wav")
-            if self._synthesize_piper_tts(clean, wav_path):
-                if self._play_file(wav_path):
-                    self.last_backend = "piper-tts"
-                    return "piper-tts"
-
-        if self._speak_sapi(clean):
-            self.last_backend = "sapi"
-            return "sapi"
-
-        self.last_backend = None
-        return None
-
-    def speak(
-        self,
-        text: str,
-        on_done: Callable[[str | None], None] | None = None,
-    ) -> threading.Thread | None:
-        """Doğal Türkçe seslendirmeyi UI'ı bloklamadan arka planda başlatır."""
-        if not str(text or "").strip():
-            return None
-
-        def _worker() -> None:
-            backend = self.speak_sync(text)
-            if on_done is not None:
-                on_done(backend)
-
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-        return t
-
-    def stop(self) -> None:
-        self._stop_event.set()
-        if pygame is not None:
-            try:
-                if pygame.mixer.get_init():
-                    pygame.mixer.music.stop()
-            except Exception:
-                pass
-        if self._sapi_service is not None:
-            try:
-                self._sapi_service.stop()
-            except Exception:
-                pass
-
-
-# ---------------------------------------------------------------------------
 # 7. Odak Lofi Ambiyansı (Yağmur + Şömine Çıtırtısı + Hafif Mırıldanma)
 # ---------------------------------------------------------------------------
 
@@ -745,6 +551,9 @@ class LofiAmbiencePlayer:
         self._sound = None
         self._playing = False
         self._lock = threading.Lock()
+        self._afplay_proc = None
+        self._afplay_path: str | None = None
+        self._afplay_vol: float = 0.35
 
     @property
     def is_playing(self) -> bool:
@@ -758,6 +567,32 @@ class LofiAmbiencePlayer:
             )
         return self._wav_bytes
 
+    def _afplay_loop(self, afplay_bin: str, path: str) -> None:
+        try:
+            while self._playing:
+                vol = f"{max(0.0, min(1.0, self._afplay_vol)):.2f}"
+                proc = subprocess.Popen(
+                    [afplay_bin, "-v", vol, path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                with self._lock:
+                    if not self._playing:
+                        proc.terminate()
+                        break
+                    self._afplay_proc = proc
+                proc.wait()
+        except Exception:
+            logging.debug("macOS afplay lofi döngüsü durdu", exc_info=True)
+        finally:
+            with self._lock:
+                self._afplay_proc = None
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except OSError:
+                pass
+
     def start(
         self,
         master_vol: float = 0.35,
@@ -769,8 +604,25 @@ class LofiAmbiencePlayer:
                 return True
             wav_data = self._ensure_wav()
             self._playing = True
+            self._afplay_vol = max(0.0, min(1.0, float(master_vol)))
             if pygame is None:
-                return False
+                afplay_bin = shutil.which("afplay") if sys.platform == "darwin" else None
+                if not afplay_bin:
+                    self._playing = False
+                    return False
+                try:
+                    with tempfile.NamedTemporaryFile(prefix="komur-lofi-", suffix=".wav", delete=False) as f:
+                        f.write(wav_data)
+                        path = f.name
+                    self._afplay_path = path
+                    threading.Thread(
+                        target=self._afplay_loop, args=(afplay_bin, path), daemon=True
+                    ).start()
+                    return True
+                except Exception:
+                    logging.debug("macOS Lofi ambiyans başlatılamadı", exc_info=True)
+                    self._playing = False
+                    return False
             try:
                 if not pygame.mixer.get_init():
                     pygame.mixer.init(
@@ -795,6 +647,7 @@ class LofiAmbiencePlayer:
         screen_w: float | None = None,
     ) -> None:
         vol = max(0.0, min(1.0, float(master_vol)))
+        self._afplay_vol = vol
         if self._channel is not None:
             if cat_x is not None and screen_w is not None:
                 apply_channel_pan(self._channel, cat_x, screen_w, vol)
@@ -806,6 +659,21 @@ class LofiAmbiencePlayer:
     def stop(self) -> None:
         with self._lock:
             self._playing = False
+            proc = self._afplay_proc
+            self._afplay_proc = None
+            path = self._afplay_path
+            self._afplay_path = None
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            if path:
+                try:
+                    if os.path.exists(path):
+                        os.unlink(path)
+                except OSError:
+                    pass
             if self._channel is not None:
                 try:
                     self._channel.stop()
@@ -813,103 +681,3 @@ class LofiAmbiencePlayer:
                     pass
                 self._channel = None
             self._sound = None
-
-
-# ---------------------------------------------------------------------------
-# 8. Mikrofon Gürültüsü Tepkisi (MicNoiseMonitor)
-# ---------------------------------------------------------------------------
-
-class MicNoiseMonitor:
-    """Mikrofon RMS seviyesini izleyerek tepki durumu döndürür:
-    - rms > 0.35 -> "startle" (irkilme)
-    - silence_sec >= 180 -> "deep_sleep" (derin uyku)
-    - Aksi halde -> None
-    """
-
-    def __init__(
-        self,
-        startle_threshold: float = 0.35,
-        silence_threshold: float = 0.02,
-        deep_sleep_seconds: float = 180.0,
-        startle_cooldown: float = 5.0,
-    ):
-        self.startle_threshold = float(startle_threshold)
-        self.silence_threshold = float(silence_threshold)
-        self.deep_sleep_seconds = float(deep_sleep_seconds)
-        self.startle_cooldown = float(startle_cooldown)
-        self._silence_elapsed = 0.0
-        self._last_time: float | None = None
-        self._last_startle_time: float | None = None
-        self.state = "awake"
-
-    @staticmethod
-    def compute_rms(samples: Iterable[float]) -> float:
-        """Örnek dizisinin RMS değerini hesaplar (numpy gerektirmez)."""
-        total = 0.0
-        count = 0
-        for s in samples:
-            val = float(s)
-            total += val * val
-            count += 1
-        if count == 0:
-            return 0.0
-        return math.sqrt(total / count)
-
-    @property
-    def silence_seconds(self) -> float:
-        return self._silence_elapsed
-
-    def process_rms(
-        self,
-        rms: float,
-        now: float | None = None,
-        dt: float | None = None,
-    ) -> str | None:
-        """Hesaplanmış RMS değerini değerlendirir ve gerekiyorsa olay adı döndürür."""
-        t = time.monotonic() if now is None else float(now)
-        if dt is not None:
-            delta = max(0.0, float(dt))
-        elif self._last_time is not None:
-            delta = max(0.0, t - self._last_time)
-        else:
-            delta = 0.0
-        self._last_time = t
-
-        level = float(rms)
-        if level > self.startle_threshold:
-            self._silence_elapsed = 0.0
-            self.state = "startled"
-            if (
-                self._last_startle_time is None
-                or (t - self._last_startle_time) >= self.startle_cooldown
-            ):
-                self._last_startle_time = t
-                return "startle"
-            return None
-
-        if level <= self.silence_threshold:
-            self._silence_elapsed += delta
-            if self._silence_elapsed >= self.deep_sleep_seconds:
-                self.state = "deep_sleep"
-                return "deep_sleep"
-            return None
-
-        self._silence_elapsed = 0.0
-        self.state = "awake"
-        return None
-
-    def process_audio(
-        self,
-        samples: Iterable[float],
-        now: float | None = None,
-        dt: float | None = None,
-    ) -> str | None:
-        """Ses örneklerinden RMS hesaplayıp durum değerlendirmesi yapar."""
-        rms = self.compute_rms(samples)
-        return self.process_rms(rms, now=now, dt=dt)
-
-    def reset(self) -> None:
-        self._silence_elapsed = 0.0
-        self._last_time = None
-        self._last_startle_time = None
-        self.state = "awake"

@@ -1,5 +1,5 @@
 import pytest
-from ai import parse_intent
+from intents import parse_intent
 
 
 @pytest.mark.parametrize("text,action,args", [

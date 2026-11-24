@@ -2,19 +2,16 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import settings
-from ai import CatAI
+from commands import CommandEngine
 from assistant_ui import AssistantUI
 
 
 def _ai(ctx):
     actions = MagicMock()
     actions.describe_for_prompt.return_value = ""
-    return CatAI(lambda k, default=None: {"ai_backend": "offline"}.get(k, default), actions, context_provider=lambda: ctx)
+    return CommandEngine(lambda k, default=None: {"ai_backend": "offline"}.get(k, default), actions, context_provider=lambda: ctx)
 
 
-def test_weather_goes_into_context_text():
-    text = _ai({"summary": "", "weather": "Antalya 18°C açık"})._context_text()
-    assert "Hava: Antalya 18°C açık" in text
 
 
 def test_hava_nasil_uses_known_weather_offline():

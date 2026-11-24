@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from ai import CatAI, HABIT_MIN_DAYS
+from commands import CommandEngine, HABIT_MIN_DAYS
 from memory_store import MemoryStore
 
 
@@ -35,7 +35,7 @@ def make(tmp_path, settings=None, when=None):
     store = MemoryStore(tmp_path / "m.sqlite3")
     clock = Clock(when or dt.datetime(2026, 11, 10, 21, 5))
     actions = Actions()
-    ai = CatAI((settings or {}).get, actions, clock=clock, rng=random.Random(1), habits=store, which=lambda _: None)
+    ai = CommandEngine((settings or {}).get, actions, clock=clock, rng=random.Random(1), habits=store)
     return ai, store, clock, actions
 
 
@@ -117,7 +117,7 @@ def test_setting_off_stops_recording_and_suggestions(tmp_path):
 def test_default_is_on_and_works_without_store(tmp_path):
     ai, store, clock, actions = make(tmp_path)
     assert ai._habits_enabled()
-    plain = CatAI({}.get, Actions(), which=lambda _: None)
+    plain = CommandEngine({}.get, Actions())
     assert plain.habit_suggestion() is None
     plain.respond("spotify aç")                              # hafıza yokken sorunsuz
 

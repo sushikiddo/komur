@@ -73,8 +73,8 @@ class ToyBrain:
     DRINK_EVERY = 420.0
     BOX_EVERY = 300.0
     BOX_STAY = (20.0, 40.0)
-    GO_COOLDOWN = 4.0
-    REACH = {"bowl": 60.0, "post": 60.0, "box": 30.0}
+    GO_COOLDOWN = 1.5
+    REACH = {"bowl": 75.0, "post": 75.0, "box": 45.0}
 
     def __init__(self):
         self.play_until = 0.0
@@ -138,11 +138,13 @@ class ToyBrain:
 
 class _ToyWindow:
     def __init__(self, master, kind, x, y, on_throw):
-        from window_utils import BG, make_transparent
+        from window_utils import BG, ensure_floating, make_transparent
         self.kind = kind
         self.w, self.h = SIZES[kind]
         self.x, self.y = float(x), float(y)      # pencere sol-üst
         self.win = tk.Toplevel(master)
+        self.win.withdraw()
+        self.win.title(f"Kömür — {LABELS.get(kind, kind)}")
         make_transparent(self.win)
         self.canvas = tk.Canvas(self.win, width=self.w, height=self.h, bg=BG, highlightthickness=0)
         self.canvas.pack()
@@ -156,6 +158,9 @@ class _ToyWindow:
         self.draw(0.0)
         # İlk konum geometry ile: harita öncesi SetWindowPos henüz çerçeve penceresini bulamaz.
         self.win.geometry(f"{self.w}x{self.h}+{round(self.x)}+{round(self.y)}")
+        self.win.update_idletasks()
+        self.win.deiconify()
+        ensure_floating(self.win)
 
     def place(self):
         from window_utils import place_window
@@ -165,25 +170,94 @@ class _ToyWindow:
         c = self.canvas
         c.delete("all")
         if self.kind == "yarn":
-            c.create_oval(2, 2, 34, 34, fill="#d64545", outline="#8e2020", width=2)
-            for k in range(3):
-                a = angle + k * math.pi / 3
-                dx, dy = math.cos(a) * 14, math.sin(a) * 14
-                c.create_line(18 - dx, 18 - dy, 18 + dx, 18 + dy, fill="#f08a8a", width=2, smooth=True)
+            # Trailing loose yarn tail
+            tail_phase = math.sin(angle * 1.5) * 2.5
+            c.create_line(
+                24, 29, 30, 32 + tail_phase * 0.4, 34, 29 - tail_phase * 0.5,
+                fill="#a62828", width=3, smooth=True, capstyle="round",
+            )
+            c.create_line(
+                24, 29, 30, 32 + tail_phase * 0.4, 34, 29 - tail_phase * 0.5,
+                fill="#e86a6a", width=1.2, smooth=True, capstyle="round",
+            )
+            # Soft contact shadow
+            c.create_oval(7, 29, 29, 34, fill="#4a1c1c", outline="")
+            # Base yarn sphere & shaded lower-right crescent
+            c.create_oval(3, 2, 33, 32, fill="#d13b3b", outline="#7a1b1b", width=2)
+            c.create_arc(4, 3, 32, 31, start=205, extent=145, style="chord", fill="#a62828", outline="")
+            # Crisscrossing wound yarn strands rotating smoothly with angle
+            cx, cy, r = 18.0, 17.0, 12.8
+            for k in range(4):
+                a = angle + k * (math.pi / 4.0)
+                ca, sa = math.cos(a), math.sin(a)
+                nx, ny = -sa, ca
+                bend = 5.2 if k % 2 == 0 else -4.6
+                x1, y1 = cx - ca * r, cy - sa * r
+                x2, y2 = cx + ca * r, cy + sa * r
+                mx, my = cx + nx * bend, cy + ny * bend
+                color = "#f28c8c" if k % 2 == 0 else "#962020"
+                c.create_line(x1, y1, mx, my, x2, y2, fill=color, width=1.8, smooth=True, capstyle="round")
+            # Specular highlight
+            c.create_oval(8, 6, 16, 12, fill="#f7b0b0", outline="")
         elif self.kind == "bowl":
-            c.create_oval(4, 4, 68, 16, fill="#fbfbf6", outline="#9aa5b1", width=2)
-            c.create_polygon(4, 10, 68, 10, 58, 32, 14, 32, fill="#4f7cac", outline="#2f4f73", width=2)
+            # Soft contact shadow
+            c.create_oval(11, 28, 61, 33, fill="#2e3b4a", outline="")
+            # Glossy ceramic bowl body with rounded base
+            c.create_oval(13, 24, 59, 32, fill="#38618c", outline="#244263", width=1.5)
+            c.create_polygon(6, 11, 66, 11, 59, 29, 13, 29, fill="#4b7bae", outline="#244263", width=2)
+            # Curved highlight & right-side shading on ceramic
+            c.create_polygon(11, 13, 22, 13, 24, 27, 16, 27, fill="#74a6db", outline="")
+            c.create_polygon(52, 13, 62, 13, 57, 27, 49, 27, fill="#345a82", outline="")
+            c.create_line(14, 15, 17, 25, fill="#d1e6fa", width=2, capstyle="round")
+            # Ceramic top rim with bright highlight
+            c.create_oval(4, 4, 68, 17, fill="#e6eef5", outline="#6c8299", width=2)
+            # Creamy white milk fill + subtle ripple rings + glint
+            c.create_oval(8, 6, 64, 15, fill="#fbfbf6", outline="#d8dce0", width=1)
+            c.create_oval(18, 8, 54, 13, fill="", outline="#e6e2d3", width=1)
+            c.create_oval(27, 9, 45, 12, fill="", outline="#efecde", width=1)
+            c.create_oval(15, 8, 24, 10, fill="#ffffff", outline="")
         elif self.kind == "box":
-            c.create_rectangle(3, 14, 107, 58, fill="#c89b5c", outline="#8a6234", width=2)
-            c.create_rectangle(1, 8, 109, 20, fill="#d9ae70", outline="#8a6234", width=2)
-            c.create_rectangle(46, 8, 64, 30, fill="#e8d3a6", outline="#b09660")
-            c.create_line(10, 38, 100, 38, fill="#a97f45")
-            c.create_text(55, 47, text="KÖMÜR", fill="#7a5428", font=("Segoe UI", 8, "bold"))
+            # Inner dark cardboard opening
+            c.create_polygon(14, 14, 96, 14, 103, 23, 7, 23, fill="#6e4820", outline="#4f3215", width=1.5)
+            # Back angled flap
+            c.create_polygon(14, 14, 96, 14, 91, 5, 19, 5, fill="#b8884c", outline="#785226", width=1.5)
+            # Left & right open top flaps
+            c.create_polygon(7, 22, 14, 14, 4, 8, 1, 18, fill="#deb476", outline="#785226", width=1.5)
+            c.create_polygon(103, 22, 96, 14, 106, 8, 109, 18, fill="#cfa263", outline="#785226", width=1.5)
+            # Front corrugated cardboard wall
+            c.create_rectangle(6, 22, 104, 58, fill="#c89b5c", outline="#785226", width=2)
+            # Side highlight & shade panels
+            c.create_rectangle(8, 24, 14, 56, fill="#dcb478", outline="")
+            c.create_rectangle(96, 24, 102, 56, fill="#ad7f42", outline="")
+            # Under-rim shadow & corrugated seam lines
+            c.create_rectangle(7, 22, 103, 26, fill="#a6783b", outline="")
+            c.create_line(14, 34, 96, 34, fill="#b38446", width=1)
+            c.create_line(14, 53, 96, 53, fill="#b38446", width=1)
+            # Packing tape strip with sheen
+            c.create_rectangle(44, 21, 66, 36, fill="#e8d3a6", outline="#b09660", width=1)
+            c.create_line(47, 24, 63, 24, fill="#f7ecd2", width=1.2)
+            # Crisp KÖMÜR label
+            c.create_text(55, 45, text="KÖMÜR", fill="#5e3d1a", font=("Segoe UI", 9, "bold"))
         else:
-            c.create_rectangle(4, 100, 42, 110, fill="#8a5a33", outline="#5c3a1e", width=2)
-            c.create_rectangle(15, 4, 31, 100, fill="#d9b779", outline="#9c7b45", width=2)
-            for yy in range(12, 96, 9):
-                c.create_line(15, yy, 31, yy + 5, fill="#9c7b45")
+            # Sturdy plush carpet base
+            c.create_rectangle(4, 97, 42, 110, fill="#7d5333", outline="#4f321c", width=2)
+            c.create_polygon(4, 97, 42, 97, 38, 92, 8, 92, fill="#a37249", outline="#5c3a1e", width=1.5)
+            for tx in range(9, 39, 6):
+                c.create_line(tx, 101, tx + 2, 106, fill="#966842", width=1.2)
+            # Sisal-wrapped post with depth shading & tightly wound diagonal rope texture
+            c.create_rectangle(15, 14, 31, 95, fill="#d9b779", outline="#8a6836", width=2)
+            c.create_rectangle(25, 15, 30, 94, fill="#b89352", outline="")
+            c.create_rectangle(16, 15, 19, 94, fill="#ebd098", outline="")
+            for yy in range(17, 93, 5):
+                c.create_line(16, yy, 30, yy + 3, fill="#9c7b45", width=1.3)
+                c.create_line(16, yy + 1.5, 30, yy + 4.5, fill="#ebd29f", width=0.8)
+            # Plush top perch cap
+            c.create_rectangle(8, 4, 38, 14, fill="#a37249", outline="#5c3a1e", width=2)
+            c.create_rectangle(10, 5, 36, 8, fill="#c28f63", outline="")
+            # Cute dangling pom-pom ball on a string
+            c.create_line(36, 13, 40, 25, 38, 36, fill="#d9c8a7", width=1.5, smooth=True)
+            c.create_oval(33, 34, 43, 44, fill="#e65c73", outline="#9c2e42", width=1.5)
+            c.create_oval(35, 36, 38, 39, fill="#ffadb9", outline="")
 
     def _press(self, event):
         self.falling = False
@@ -214,6 +288,126 @@ class _ToyWindow:
             pass
 
 
+class _LaserDotWindow:
+    """Ekran üzerinde fareyi takip eden 26x26 saydam kırmızı lazer noktası penceresi."""
+
+    SIZE = 26
+    TITLE = "Kömür — Lazer"
+
+    def __init__(self, master):
+        from window_utils import BG, make_transparent
+        self.master = master
+        self.size = self.SIZE
+        self.visible = False
+        self._destroyed = False
+        self._phase = 0.0
+        self.x = 0.0
+        self.y = 0.0
+        self.win = tk.Toplevel(master)
+        self.win.withdraw()
+        self.win.title(self.TITLE)
+        make_transparent(self.win, elevated=True)
+        self.canvas = tk.Canvas(
+            self.win, width=self.size, height=self.size,
+            bg=BG, highlightthickness=0, borderwidth=0,
+        )
+        self.canvas.pack()
+        self._draw(0.0)
+
+    def _apply_click_through(self):
+        """Lazer noktasının altındaki pencerelere tıklamayı engellememesi için fare olaylarını geçir."""
+        try:
+            import window_utils
+            if window_utils.IS_MAC:
+                o = window_utils._objc_runtime()
+                app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+                for nswin in o.items(o.send(app, o.sel("windows"))):
+                    if o.to_str(o.send(nswin, o.sel("title"))) == self.TITLE:
+                        o.send_bool(nswin, o.sel("setIgnoresMouseEvents:"), True)
+                        break
+            elif window_utils.IS_WINDOWS:
+                import ctypes
+                user32 = ctypes.windll.user32
+                hwnd = user32.GetParent(self.win.winfo_id()) or self.win.winfo_id()
+                ex = user32.GetWindowLongW(hwnd, -20)
+                user32.SetWindowLongW(hwnd, -20, ex | 0x00080000 | 0x00000020)
+        except Exception:
+            pass
+
+    def _draw(self, phase):
+        c = self.canvas
+        c.delete("all")
+        pulse = 0.5 + 0.5 * math.sin(phase)
+        cx = cy = self.size / 2.0
+        r_outer = 9.0 + 2.2 * pulse
+        c.create_oval(
+            cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer,
+            fill="", outline="#ff4d6d", width=2.0,
+        )
+        r_mid = 6.2 + 1.0 * pulse
+        c.create_oval(
+            cx - r_mid, cy - r_mid, cx + r_mid, cy + r_mid,
+            fill="#ff4d6d", outline="",
+        )
+        r_core = 3.9 + 0.6 * pulse
+        c.create_oval(
+            cx - r_core, cy - r_core, cx + r_core, cy + r_core,
+            fill="#ff0a2f", outline="",
+        )
+        c.create_oval(cx - 1.5, cy - 1.5, cx + 1.3, cy + 1.3, fill="#ffffff", outline="")
+
+    def show(self, x=None, y=None):
+        if self._destroyed:
+            return
+        from window_utils import ensure_floating, place_window
+        try:
+            if x is not None and y is not None:
+                self.x = float(x) - self.size / 2.0
+                self.y = float(y) - self.size / 2.0
+                self.win.geometry(f"{self.size}x{self.size}+{round(self.x)}+{round(self.y)}")
+            self.win.update_idletasks()
+            self.win.deiconify()
+            ensure_floating(self.win, elevated=True)
+            self._apply_click_through()
+            if x is not None and y is not None:
+                place_window(self.win, self.x, self.y, self.size, self.size)
+            self.visible = True
+        except tk.TclError:
+            pass
+
+    def update(self, x, y, dt=0.016):
+        if self._destroyed or not self.visible:
+            return
+        from window_utils import place_window
+        self._phase = (self._phase + float(dt) * 10.0) % (2.0 * math.pi)
+        self.x = float(x) - self.size / 2.0
+        self.y = float(y) - self.size / 2.0
+        try:
+            self._draw(self._phase)
+            place_window(self.win, self.x, self.y, self.size, self.size)
+        except tk.TclError:
+            pass
+
+    def hide(self):
+        if self._destroyed:
+            return
+        self.visible = False
+        try:
+            self.win.withdraw()
+        except tk.TclError:
+            pass
+
+    def destroy(self):
+        if self._destroyed:
+            return
+        self._destroyed = True
+        self.visible = False
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
+
+
 class ToyBox:
     """Oyuncak pencerelerini, yumak fiziğini ve kedi kararlarını tek döngüde yürütür."""
 
@@ -224,6 +418,7 @@ class ToyBox:
         self.brain = ToyBrain()
         self.visible = True
         self.box_until = 0.0
+        self._box_hidden_for_cat = False
         self._lift_at = 0.0
 
     def has(self, kind):
@@ -237,6 +432,7 @@ class ToyBox:
                 self.yarn = None
             if kind == "box":
                 self.box_until = 0.0
+                self._box_hidden_for_cat = False
             return False
         w, h = SIZES[kind]
         toy = _ToyWindow(self.master, kind, x - w / 2, y - h, self._on_throw)
@@ -268,8 +464,35 @@ class ToyBox:
         if visible == self.visible:
             return
         self.visible = visible
-        for toy in self.toys.values():
-            (toy.win.deiconify if visible else toy.win.withdraw)()
+        for kind, toy in self.toys.items():
+            if visible and kind == "box" and self._box_hidden_for_cat:
+                continue
+            try:
+                (toy.win.deiconify if visible else toy.win.withdraw)()
+                if visible:
+                    from window_utils import ensure_floating
+                    ensure_floating(toy.win)
+            except tk.TclError:
+                pass
+
+    def _show_box_window(self, toy):
+        self._box_hidden_for_cat = False
+        if not self.visible:
+            return
+        try:
+            from window_utils import ensure_floating
+            toy.place()
+            toy.win.deiconify()
+            ensure_floating(toy.win)
+        except tk.TclError:
+            pass
+
+    def exit_box(self):
+        """Kedi kutudan erken çıkarsa (sürükleme/komut/lazer) masaüstü kutusunu hemen geri göster."""
+        self.box_until = 0.0
+        toy = self.toys.get("box")
+        if toy is not None and self._box_hidden_for_cat:
+            self._show_box_window(toy)
 
     def _fall_static(self, dt, ground_y):
         for toy in self.toys.values():
@@ -284,20 +507,23 @@ class ToyBox:
     def _update_box(self, now, event):
         toy = self.toys.get("box")
         if toy is None:
+            self.box_until = 0.0
+            self._box_hidden_for_cat = False
             return
         if event and event["action"] == "box":
             self.box_until = now + event.get("stay", 25.0)
             self._lift_at = 0.0
         if now < self.box_until:
-            if now >= self._lift_at:       # kutu kedinin önüne geçsin: alt gövde kutunun içinde kalır
-                toy.win.lift()
-                self._lift_at = now + 1.0
-        elif self.box_until:
+            # Kömür kutunun içindeyken (box_sit) çift kutu olmaması için statik kutu penceresini gizle
+            if not self._box_hidden_for_cat:
+                self._box_hidden_for_cat = True
+                try:
+                    toy.win.withdraw()
+                except tk.TclError:
+                    pass
+        elif self.box_until or self._box_hidden_for_cat:
             self.box_until = 0.0
-            try:
-                self.master.lift()          # çıkınca kedi yine önde
-            except tk.TclError:
-                pass
+            self._show_box_window(toy)
 
     def step(self, dt, now, area, platforms, cat_center, cat_idle, hunger):
         """Yumağı ilerlet, pencereleri taşı; kedi için en fazla bir olay döndür."""

@@ -1,6 +1,7 @@
-"""Compact, cat-anchored Dark Glassmorphism chat HUD."""
+"""Kediye bağlı küçük komut yazma baloncuğu (Dark Glassmorphism)."""
 import tkinter as tk
 
+from window_utils import IS_MAC, Button, apply_color_key, ensure_floating, mac_present_key_window
 from bubble import ACCENT_GLOW, BORDER, FILL, KEY, SHADOW, TEXT, place_window, rounded_bubble_points, work_area_at
 
 SURFACE = "#1f2630"
@@ -25,7 +26,7 @@ def _bind_hover(widget, normal_bg, hover_bg, normal_fg=TEXT, hover_fg=TEXT):
 
 
 class ChatBubble:
-    WIDTH, HEIGHT = 250, 170
+    WIDTH, HEIGHT = 250, 146
     RECENTER_DISTANCE = 250   # kedi balondan bu kadar uzaklaşırsa yeniden konumlan (px)
     LOG_LINES = 3             # gösterilen son mesaj sayısı
 
@@ -34,7 +35,7 @@ class ChatBubble:
         self.app = assistant.app
         self.window = tk.Toplevel(self.app.root)
         self.window.withdraw()
-        self.window.title("Kömür — sohbet")
+        self.window.title("Kömür — komut")
         self.window.overrideredirect(True)
         try:
             self.window.attributes("-topmost", True)
@@ -42,10 +43,7 @@ class ChatBubble:
         except tk.TclError:
             pass
         self.window.configure(bg=KEY)
-        try:
-            self.window.attributes("-transparentcolor", KEY)
-        except tk.TclError:
-            pass
+        apply_color_key(self.window, KEY)
 
         canvas = tk.Canvas(
             self.window, width=self.WIDTH, height=self.HEIGHT, bg=KEY, highlightthickness=0, borderwidth=0,
@@ -81,10 +79,10 @@ class ChatBubble:
         status_label = tk.Label(header, textvariable=self.status, bg=FILL, fg=ACCENT_GLOW, anchor="w",
                                 font=("Segoe UI", 7), cursor="fleur")
         status_label.pack(side="left", padx=(5, 0), fill="x", expand=True)
-        close_btn = tk.Button(header, text="×", command=self.hide, **small)
+        close_btn = Button(header, text="×", command=self.hide, **small)
         close_btn.pack(side="right")
         _bind_hover(close_btn, SURFACE, HOVER, MUTED, TEXT)
-        history_btn = tk.Button(header, text="🕘", command=assistant.show_history, **small)
+        history_btn = Button(header, text="🕘", command=assistant.show_history, **small)
         history_btn.pack(side="right", padx=(0, 3))
         _bind_hover(history_btn, SURFACE, HOVER, MUTED, TEXT)
         for widget in (header, title, status_label, canvas):
@@ -106,7 +104,7 @@ class ChatBubble:
         # Giriş + gönder aynı satırda.
         entry_row = tk.Frame(body, bg=FILL)
         entry_row.pack(fill="x", pady=(4, 3))
-        self.send_button = tk.Button(
+        self.send_button = Button(
             entry_row, text="➤", command=self.send, bg=ACCENT_BTN, fg="#ffffff",
             activebackground=ACCENT_BTN_HOVER, activeforeground="#ffffff", disabledforeground="#8b949e",
             relief="flat", bd=0, padx=8, pady=0, highlightthickness=0, font=("Segoe UI", 9, "bold"), cursor="hand2",
@@ -121,30 +119,8 @@ class ChatBubble:
         self.entry.pack(side="left", fill="x", expand=True, ipady=3)
         self.entry.bind("<Return>", lambda event: self.send())
 
-        # Tek satırda küçük simge düğmeleri (metinsiz).
-        controls = tk.Frame(body, bg=FILL)
-        controls.pack(fill="x")
-        icon = dict(small, fg=TEXT, padx=6, pady=1)
-        self.mic_button = tk.Button(controls, text="🎤", command=assistant.toggle_listening, **icon)
-        self.screen_button = tk.Button(controls, text="🖥️", command=assistant.share_screen, **icon)
-        self.clipboard_button = tk.Button(controls, text="📋", command=assistant.share_clipboard, **icon)
-        self.stop_button = tk.Button(controls, text="⏹", command=self.stop_response, state="disabled", **icon)
-        for btn in (self.mic_button, self.screen_button, self.clipboard_button, self.stop_button):
-            btn.pack(side="left", padx=(0, 3))
-            _bind_hover(btn, SURFACE, HOVER)
-
-        self.voice_enabled = tk.BooleanVar(value=self.app.settings.get("voice_replies"))
-        voice_chk = tk.Checkbutton(
-            controls, text="🔊", variable=self.voice_enabled,
-            command=lambda: assistant.set_voice_enabled(self.voice_enabled.get()),
-            bg=FILL, fg=MUTED, selectcolor=SURFACE, activebackground=FILL, activeforeground=TEXT,
-            bd=0, highlightthickness=0, font=("Segoe UI", 9), cursor="hand2",
-        )
-        voice_chk.pack(side="left", padx=2)
-
         self.window.bind("<Escape>", lambda event: self.hide())
         self._visible = False
-        self.partial = ""
         self._placed_at = None   # son konumlanmada balonun sol-üst köşesi
 
     # -- sürükleme -----------------------------------------------------------
@@ -168,24 +144,16 @@ class ChatBubble:
         self.window.deiconify()
         self.update_position(force=True)
         self.window.lift()
-        self.entry.focus_set()
+        if IS_MAC:
+            ensure_floating(self.window, keyable=True, elevated=True)
+            mac_present_key_window(self.window)
+            self.entry.focus_force()
+        else:
+            self.entry.focus_set()
 
     def hide(self):
-        cancel = getattr(self.assistant, "cancel_listening", None)
-        if cancel:
-            cancel()
-        self.stop_response()
         self._visible = False
         self.window.withdraw()
-
-    def stop_response(self):
-        cancel = getattr(self.assistant, "cancel_response", None)
-        if cancel:
-            cancel()
-        voice = getattr(self.assistant, "voice", None)
-        if voice and hasattr(voice, "stop"):
-            voice.stop()
-        self.stop_button.configure(state="disabled")
 
     def _target_position(self):
         x, y = self.app.brain.x, self.app.brain.y
@@ -220,38 +188,14 @@ class ChatBubble:
             tag = "user_label" if speaker == "Sen" else "bot_label"
             self.messages.insert("end", f"{speaker}:", tag)
             self.messages.insert("end", f" {text}\n")
-        if self.partial:
-            self.messages.insert("end", "Kömür:", "bot_label")
-            self.messages.insert("end", f" {self.partial}")
-        elif not recent:
-            self.messages.insert("end", "Buradayım. Yaz ya da 🎤 ile konuş.", "muted")
+        if not recent:
+            self.messages.insert("end", "Komut yaz: 'not defterini aç', 'uyu', 'dans et'…", "muted")
         self.messages.configure(state="disabled")
         self.messages.see("end")
 
-    def set_partial(self, text):
-        """Akan (henüz kesinleşmemiş) yanıt; kalıcı sohbet kaydına yazılmaz."""
-        text = str(text or "")
-        if text == self.partial:
-            return
-        self.partial = text
-        if self.visible:
-            self.refresh()
-
     def set_busy(self, busy):
         self.send_button.configure(state="disabled" if busy else "normal")
-        self.screen_button.configure(state="disabled" if busy else "normal")
-        self.clipboard_button.configure(state="disabled" if busy else "normal")
-        self.stop_button.configure(state="normal" if busy else "disabled")
-        listening = bool(getattr(self.assistant, "listening", False))
-        self.mic_button.configure(
-            state="normal" if listening else ("disabled" if busy else "normal"),
-            text="⏺" if listening else "🎤",
-        )
-        self.status.set(
-            "Dinliyorum · 🎤 ile gönder"
-            if listening
-            else ("Düşünüyorum…" if busy else "Hazırım")
-        )
+        self.status.set("Yapıyorum…" if busy else "Hazırım")
 
     def send(self):
         text = self.entry.get().strip()

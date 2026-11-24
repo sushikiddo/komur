@@ -1,8 +1,10 @@
 """Modern Dark Glassmorphism right-click quick action HUD for Kömür."""
 from __future__ import annotations
 
+import time
 import tkinter as tk
 
+from window_utils import IS_MAC, Button, apply_color_key, ensure_floating, mac_app_is_active, mac_present_key_window
 from bubble import ACCENT_GLOW, BORDER, FILL, KEY, SHADOW, TEXT, place_window, rounded_bubble_points, work_area_at
 
 SURFACE = "#1f2630"
@@ -44,7 +46,7 @@ class ModernContextHUD:
     """
 
     WIDTH = 316
-    HEIGHT = 500   # 13 kart = 7 satır (2 sütun) + başlık + alt düğmeler + ipucu satırı
+    HEIGHT = 538   # 12 kart = 6 satır (2 sütun) + başlık + ses anahtarı + alt düğmeler + ipucu satırı
 
     def __init__(self, app):
         self.app = app
@@ -58,14 +60,13 @@ class ModernContextHUD:
         except tk.TclError:
             pass
         self.window.configure(bg=KEY)
-        try:
-            self.window.attributes("-transparentcolor", KEY)
-        except tk.TclError:
-            pass
+        apply_color_key(self.window, KEY)
 
         self._visible = False
         self._destroyed = False
         self._focus_check_id = None
+        self._mac_poll_id = None
+        self._shown_at = 0.0
         self.action_buttons: dict[str, tk.Button] = {}
         self.pill_buttons: dict[str, tk.Button] = {}
 
@@ -89,6 +90,7 @@ class ModernContextHUD:
         self._build_header()
         self._build_affection_bar()
         self._build_action_grid()
+        self._build_sound_toggle()
         self._build_pills()
 
         self.window.bind("<Escape>", lambda _e: self.hide())
@@ -188,7 +190,7 @@ class ModernContextHUD:
             ("chat", "💬 Sohbet", lambda: self._call("open_chat")),
             ("fish", "🐟 Balık Avı", self._action_fish),
             ("box", "📦 Kutu Bırak", self._action_box),
-            ("laser", "🔴 Lazer Aç", self._action_laser),
+            ("wander", "🐾 Gezin", lambda: self._run_command("wander")),
             ("perch", "🪟 Pencereye Tüne", self._action_perch),
             ("accessory", "👓 Aksesuarlar", self._action_accessory),
             ("lofi", "☕ Odak / Lofi", self._action_lofi_focus),
@@ -196,7 +198,6 @@ class ModernContextHUD:
             ("yarn", "🧶 İplik Yumağı", lambda: self._call("toggle_toy", "yarn")),
             ("bowl", "🥛 Süt Kasesi", lambda: self._call("toggle_toy", "bowl")),
             ("post", "🪵 Tırmalama", lambda: self._call("toggle_toy", "post")),
-            ("clipboard", "📋 Panoyu Açıkla", lambda: self._call("explain_clipboard")),
             ("weather", "🌦️ Hava Durumu", lambda: self._call("choose_weather_city")),
         ]
 
@@ -209,7 +210,7 @@ class ModernContextHUD:
                 pady=3,
                 sticky="nsew",
             )
-            btn = tk.Button(
+            btn = Button(
                 border_frame,
                 text=label,
                 command=lambda fn=callback: self._run_and_hide(fn),
@@ -235,6 +236,36 @@ class ModernContextHUD:
             ))
             self.action_buttons[key] = btn
 
+    def _build_sound_toggle(self):
+        self._sound_border = tk.Frame(self.body, bg=BORDER, padx=1, pady=1)
+        self._sound_border.pack(fill="x", pady=(0, 7))
+        self.sound_button = Button(
+            self._sound_border,
+            text="🔊 Ses Açık",
+            command=self._action_toggle_sound,
+            bg=SURFACE,
+            fg=TEXT,
+            activebackground=HOVER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            anchor="center",
+            padx=8,
+            pady=5,
+            highlightthickness=0,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+        )
+        self.sound_button.pack(fill="x")
+        self.sound_button.bind("<Enter>", lambda _e: (
+            self.sound_button.configure(bg=HOVER),
+            self._sound_border.configure(bg=ACCENT_GLOW),
+        ))
+        self.sound_button.bind("<Leave>", lambda _e: (
+            self.sound_button.configure(bg=SURFACE),
+            self._sound_border.configure(bg=BORDER),
+        ))
+
     def _build_pills(self):
         tk.Frame(self.body, bg=BORDER, height=1).pack(fill="x", pady=(0, 7))
         row = tk.Frame(self.body, bg=FILL)
@@ -250,7 +281,7 @@ class ModernContextHUD:
         ]
 
         for idx, (key, label, callback, fg_color, hover_bg) in enumerate(pills):
-            pill = tk.Button(
+            pill = Button(
                 row,
                 text=label,
                 command=lambda fn=callback, is_close=(key == "close"): (
@@ -276,7 +307,8 @@ class ModernContextHUD:
             pill.bind("<Leave>", lambda _e, p=pill, fc=fg_color: p.configure(bg=SURFACE, fg=fc))
             self.pill_buttons[key] = pill
         tk.Label(
-            self.body, text="Orta tık: sohbet · Sol tık: sev", bg=FILL, fg=MUTED, font=("Segoe UI", 8),
+            self.body, text=("İki parmak: bu menü · Sol tık: sev" if IS_MAC else "Orta tık: sohbet · Sol tık: sev"),
+            bg=FILL, fg=MUTED, font=("Segoe UI", 8),
         ).pack(pady=(5, 0))
 
     # -- lifecycle ----------------------------------------------------------
@@ -284,17 +316,25 @@ class ModernContextHUD:
         if self._destroyed:
             return
         self._cancel_focus_check()
+        self._cancel_mac_poll()
         self.refresh()
         left, top, right, bottom = work_area_at(self.window, x_root, y_root)
         px = max(left, min(right - self.WIDTH, int(x_root) + 8))
         py = max(top, min(bottom - self.HEIGHT, int(y_root) - self.HEIGHT // 2))
         self._visible = True
+        self._shown_at = time.monotonic()
         try:
+            place_window(self.window, px, py, self.WIDTH, self.HEIGHT)
             self.window.deiconify()
             place_window(self.window, px, py, self.WIDTH, self.HEIGHT)
             self.window.attributes("-topmost", True)
             self.window.lift()
+            if IS_MAC:
+                ensure_floating(self.window, keyable=True, elevated=True)
+                mac_present_key_window(self.window)
             self.window.focus_force()
+            if IS_MAC:
+                self._schedule_mac_poll()
         except tk.TclError:
             pass
 
@@ -302,6 +342,7 @@ class ModernContextHUD:
         if self._destroyed:
             return
         self._cancel_focus_check()
+        self._cancel_mac_poll()
         self._visible = False
         try:
             self.window.withdraw()
@@ -314,6 +355,7 @@ class ModernContextHUD:
         self._destroyed = True
         self._visible = False
         self._cancel_focus_check()
+        self._cancel_mac_poll()
         try:
             self.window.destroy()
         except tk.TclError:
@@ -344,14 +386,37 @@ class ModernContextHUD:
         fill_w = round(self._xp_bar_width * (progress / XP_PER_LEVEL))
         self.xp_canvas.coords(self._xp_fill_item, 0, 0, fill_w, 7)
 
-        laser_on = bool(getattr(getattr(self.app, "physics", None), "chasing_laser", False))
-        if "laser" in self.action_buttons:
-            self.action_buttons["laser"].configure(
-                text="🔴 Lazer Kapat" if laser_on else "🔴 Lazer Aç"
+        toybox = getattr(self.app, "toybox", None)
+        if toybox is not None and callable(getattr(toybox, "has", None)):
+            for key, off_label, on_label in (
+                ("box", "📦 Kutu Bırak", "📦 Kutuyu Kaldır"),
+                ("yarn", "🧶 İplik Yumağı", "🧶 Yumağı Kaldır"),
+                ("bowl", "🥛 Süt Kasesi", "🥛 Kaseyi Kaldır"),
+                ("post", "🪵 Tırmalama", "🪵 Tahtayı Kaldır"),
+            ):
+                if key in self.action_buttons:
+                    self.action_buttons[key].configure(
+                        text=on_label if toybox.has(key) else off_label
+                    )
+
+        sound_btn = getattr(self, "sound_button", None)
+        if sound_btn is not None:
+            sound_var = getattr(self.app, "sound_var", None)
+            if sound_var is not None and callable(getattr(sound_var, "get", None)):
+                sound_on = bool(sound_var.get())
+            elif settings is not None:
+                sound_on = bool(settings.get("sound", True))
+            else:
+                sound_on = True
+            sound_btn.configure(
+                text="🔊 Ses Açık" if sound_on else "🔇 Ses Kapalı",
+                fg=TEXT if sound_on else MUTED,
             )
 
     def _on_focus_out(self, event):
         if event.widget is not self.window or not self._visible:
+            return
+        if IS_MAC and time.monotonic() - self._shown_at < 0.25:
             return
         self._cancel_focus_check()
         try:
@@ -362,6 +427,8 @@ class ModernContextHUD:
     def _check_focus_lost(self):
         self._focus_check_id = None
         if not self._visible or self._destroyed:
+            return
+        if IS_MAC and time.monotonic() - self._shown_at < 0.25:
             return
         try:
             if self.window.focus_get() is None:
@@ -376,6 +443,32 @@ class ModernContextHUD:
             except tk.TclError:
                 pass
             self._focus_check_id = None
+
+    def _schedule_mac_poll(self):
+        self._cancel_mac_poll()
+        if not self._visible or self._destroyed:
+            return
+        try:
+            self._mac_poll_id = self.window.after(180, self._poll_mac_active)
+        except tk.TclError:
+            pass
+
+    def _poll_mac_active(self):
+        self._mac_poll_id = None
+        if not self._visible or self._destroyed:
+            return
+        if time.monotonic() - self._shown_at >= 0.35 and not mac_app_is_active():
+            self.hide()
+            return
+        self._schedule_mac_poll()
+
+    def _cancel_mac_poll(self):
+        if self._mac_poll_id is not None:
+            try:
+                self.window.after_cancel(self._mac_poll_id)
+            except tk.TclError:
+                pass
+            self._mac_poll_id = None
 
     # -- action dispatch ----------------------------------------------------
     def _run_and_hide(self, fn):
@@ -407,7 +500,14 @@ class ModernContextHUD:
                 self._run_command("play")
                 self._say(result["message"], 6)
                 return
-        pond.add_task("Odak Görevi")
+        task = pond.add_task("Odak Görevi")
+        brain = getattr(self.app, "brain", None)
+        if brain is not None and isinstance(task, dict):
+            w = float(getattr(self.app, "w", 200) or 200)
+            h = float(getattr(self.app, "h", 200) or 200)
+            task["x"] = float(getattr(brain, "x", 0.0)) + w * 0.5
+            task["base_y"] = float(getattr(brain, "y", 0.0)) + h * 0.22
+            task["y"] = task["base_y"]
         self._say("🐟 Yeni görev balığı havuza bırakıldı! Yakalamak için tekrar tıkla.", 5)
 
     def _action_box(self):
@@ -416,11 +516,6 @@ class ModernContextHUD:
             if callable(fn):
                 fn()
                 return
-
-    def _action_laser(self):
-        fn = getattr(self.app, "toggle_laser", None)
-        if callable(fn):
-            fn()
 
     def _action_perch(self):
         fn = getattr(self.app, "perch_active_window", None)
@@ -458,6 +553,23 @@ class ModernContextHUD:
         fn = getattr(self.app, name, None)
         if callable(fn):
             fn(*args)
+
+    def _action_toggle_sound(self):
+        fn = getattr(self.app, "toggle_sound", None)
+        if callable(fn):
+            fn()
+        else:
+            sound_var = getattr(self.app, "sound_var", None)
+            settings = getattr(self.app, "settings", None)
+            current = bool(sound_var.get()) if sound_var is not None else (
+                bool(settings.get("sound", True)) if settings is not None else True
+            )
+            nxt = not current
+            if sound_var is not None and callable(getattr(sound_var, "set", None)):
+                sound_var.set(nxt)
+            if settings is not None and callable(getattr(settings, "set", None)):
+                settings.set("sound", nxt)
+        self.refresh()
 
     def _action_panel(self):
         fn = getattr(self.app, "show_panel", None)

@@ -4,13 +4,9 @@ ve kedi-insan çevirmeni.
 from __future__ import annotations
 
 import datetime as _dt
-import json
 import math
 import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
@@ -199,40 +195,14 @@ class HardwareMind:
 # ---------------------------------------------------------------------------
 # 3. Gece Rüya Motoru (DreamEngine)
 # ---------------------------------------------------------------------------
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-def _localhost_urlopen(request: urllib.request.Request, timeout: float = 5.0):
-    host = urllib.parse.urlsplit(request.full_url).hostname
-    if host not in ("localhost", "127.0.0.1", "::1"):
-        raise ValueError("DreamEngine Ollama yalnızca yerel adrese bağlanabilir.")
-    opener = urllib.request.build_opener(_NoRedirect(), urllib.request.ProxyHandler({}))
-    return opener.open(request, timeout=timeout)
-
-
 class DreamEngine:
-    """Uyku veya gece saatlerinde geçmiş konuşma/notlardan komik kedi rüyaları üretir."""
+    """Uyku veya gece saatlerinde gün içi notlardan hazır kalıplarla komik kedi rüyaları üretir (ağ yok)."""
 
     NIGHT_START_HOUR = 23
     NIGHT_END_HOUR = 6
 
-    def __init__(
-        self,
-        memory_store: MemoryStore,
-        ai_callback: Callable[[str], str] | None = None,
-        ollama_url: str = "http://127.0.0.1:11434/api/generate",
-        ollama_model: str = "llama3.2",
-        ollama_timeout: float = 5.0,
-        opener: Callable[..., Any] | None = None,
-    ) -> None:
+    def __init__(self, memory_store: MemoryStore) -> None:
         self.memory_store = memory_store
-        self.ai_callback = ai_callback
-        self.ollama_url = ollama_url
-        self.ollama_model = ollama_model
-        self.ollama_timeout = float(ollama_timeout)
-        self._opener = opener or _localhost_urlopen
 
     @classmethod
     def is_dream_time(cls, is_sleeping: bool = False, hour: int | None = None) -> bool:
@@ -255,45 +225,6 @@ class DreamEngine:
                 snippets.append(text[:120])
         summary = " | ".join(snippets[:6])[:500]
         return snippets, summary
-
-    def _build_prompt(self, snippets: list[str]) -> str:
-        context_block = "\n".join(f"- {redact(s)}" for s in snippets[:8]) or "- Masaüstünde sakin bir gün"
-        return (
-            "Sen uyuyan siyah-beyaz smokin kedi Kömür'sün. Aşağıdaki gün içi not ve konuşmalara "
-            "dayanarak tek ya da iki cümlelik komik, sevimli, kedi mantığıyla yazılmış bir rüya anlat. "
-            "Sadece Türkçe rüya metnini yaz, başlık veya emoji ekleme.\n\n"
-            f"Gün içi izler:\n{context_block}"
-        )
-
-    def _generate_via_callback(self, prompt: str) -> str | None:
-        if self.ai_callback is None:
-            return None
-        try:
-            reply = str(self.ai_callback(prompt) or "").strip()
-            return reply or None
-        except Exception:
-            return None
-
-    def _generate_via_ollama(self, prompt: str) -> str | None:
-        payload = json.dumps({
-            "model": self.ollama_model,
-            "prompt": prompt,
-            "stream": False,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            self.ollama_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with self._opener(req, timeout=self.ollama_timeout) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-            data = json.loads(raw)
-            text = str(data.get("response", "")).strip()
-            return text or None
-        except Exception:
-            return None
 
     @staticmethod
     def _pick_topic(snippets: list[str]) -> str:
@@ -354,13 +285,7 @@ class DreamEngine:
             return None
 
         snippets, source_summary = self.collect_source_context()
-        prompt = self._build_prompt(snippets)
-
-        dream_text = (
-            self._generate_via_callback(prompt)
-            or self._generate_via_ollama(prompt)
-            or self._synthesize_offline_dream(snippets)
-        )
+        dream_text = self._synthesize_offline_dream(snippets)
         dream_text = redact(dream_text).strip()[:4000]
         dream_id = self.memory_store.add_dream(dream_text, source_summary=source_summary)
         return {

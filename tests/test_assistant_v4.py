@@ -4,7 +4,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from ai import CatAI, parse_intent, parse_action_plan
+from commands import CommandEngine
+from intents import parse_intent, parse_action_plan
 from pc_actions import PCActions, ActionSpec, PendingAction
 from memory_store import MemoryStore
 
@@ -41,7 +42,7 @@ def actions_with_log(first='Tamam', dangerous=False):
 
 def test_plan_suspends_at_confirmation_and_resumes_once():
     actions, calls = actions_with_log(dangerous=True)
-    ai = CatAI({'ai_backend': 'offline'}.get, actions)
+    ai = CommandEngine({'ai_backend': 'offline'}.get, actions)
     result = ai.execute_plan([{'name': 'first'}, {'name': 'second'}])
     assert not calls and result.needs_confirmation
     result = ai.confirm_and_continue(result.needs_confirmation[0], result.remaining_actions)
@@ -51,19 +52,11 @@ def test_plan_suspends_at_confirmation_and_resumes_once():
 @pytest.mark.parametrize('outcome', ['Olmadı: bulunamadı', 'Bekliyor: sonuç doğrulanmadı'])
 def test_plan_stops_after_failed_or_pending_step(outcome):
     actions, calls = actions_with_log(outcome)
-    result = CatAI({}.get, actions).execute_plan([{'name': 'first'}, {'name': 'second'}])
+    result = CommandEngine({}.get, actions).execute_plan([{'name': 'first'}, {'name': 'second'}])
     assert calls == ['first']
     assert 'kalan adımları' in result.reply
 
 
-def test_model_plan_suspends_at_approval():
-    actions, calls = actions_with_log(dangerous=True)
-    ai = CatAI({'ai_backend': 'local'}.get, actions)
-    ai._openai_request = Mock(return_value={'choices': [{'message': {'content': json.dumps({
-        'reply': 'Yapıyorum', 'actions': [{'name': 'first'}, {'name': 'second'}]})}}]})
-    result = ai._respond_openai('İki işi yap', True)
-    assert not calls
-    assert result.remaining_actions == [{'name': 'second'}]
 
 
 def test_memory_edit_backup_are_transactional_and_redacted(tmp_path):
@@ -98,7 +91,7 @@ def test_recurring_command_and_cancel():
 
 def test_cancellation_prevents_next_action():
     actions, calls = actions_with_log()
-    ai = CatAI({}.get, actions)
+    ai = CommandEngine({}.get, actions)
     ai.cancelled.set()
     ai.execute_plan([{'name': 'first'}, {'name': 'second'}])
     assert not calls

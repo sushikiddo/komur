@@ -1,17 +1,24 @@
-"""Gelişmiş kedi ses sentezi. winsound üzerinden oynatılır, stdlib-only.
+"""Gerçekçi kedi ses oynatıcı ve stdlib-only WAV sentezi.
 
-Her klip tek seferlik üretilir, bellekte önbelleğe alınır ve UI'ı bloklamadan
-bir daemon thread üzerinden oynatılır. Hiçbir ses dosyası paketlenmez.
+`assets/` altında gerçek kedi kaydından üretilmiş WAV dosyası varsa onu
+(isteğe bağlı pitch-shift ve 2D stereo pan ile) oynatır; step/ambiyans gibi
+prosedürel sesler veya eksik varlıklar için bellek içi WAV sentezine düşer.
+Windows'ta winsound, macOS'ta CoreAudio afplay üzerinden UI'ı bloklamadan çalar.
 """
 from __future__ import annotations
 
 import io
 import logging
 import math
+import os
 import random
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
+import time
 import wave
 
 from acoustic_engine import (
@@ -19,7 +26,9 @@ from acoustic_engine import (
     generate_step_desktop_samples,
     generate_step_window_samples,
     pan_volumes,
+    pan_wav_stereo,
     pitch_shift_samples,
+    pitch_shift_wav,
     random_pitch_factor,
 )
 
@@ -28,8 +37,59 @@ try:
 except Exception:  # pragma: no cover - non-Windows
     winsound = None
 
+# macOS: winsound yok; sistemle gelen afplay ile çalınır.
+AFPLAY = shutil.which("afplay") if sys.platform == "darwin" else None
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+MIN_PLAY_GAP_SEC = 0.45
+
+_REAL_WAV_VARIANTS: dict[str, tuple[str, ...]] = {
+    "meow": ("meow_a.wav", "meow_b.wav", "meow_c.wav"),
+    "purr": ("purr_short.wav", "sleepy_a.wav"),
+    "purr_long": ("purr_long.wav", "purr_loop.wav"),
+    "purr_loop": ("purr_loop.wav",),
+    "play": ("pounce_a.wav", "pounce_b.wav", "mew_b.wav"),
+    "sleep": ("sleepy_a.wav", "sleepy_b.wav"),
+    "chirp": ("trill_a.wav", "trill_b.wav", "greet_a.wav"),
+    "hiss": ("hiss_a.wav", "hiss_b.wav"),
+    "sneeze": ("sneeze_a.wav", "sneeze_b.wav"),
+    "knead": ("purr_short.wav", "sleepy_a.wav"),
+    "happy": ("feed_a.wav", "feed_b.wav", "greet_a.wav"),
+    "angry": ("growl_hiss.wav", "hiss_a.wav"),
+    "drink": ("purr_short.wav",),
+    "eat": ("nom_a.wav", "nom_b.wav", "feed_a.wav"),
+    "greet": ("greet_a.wav", "trill_a.wav"),
+    "question": ("question_a.wav", "question_b.wav"),
+    "hungry": ("hungry_a.wav", "hungry_b.wav"),
+    "yawn": ("yawn_a.wav", "yawn_b.wav"),
+    "mew": ("mew_a.wav", "mew_b.wav"),
+}
+
+
+def play_wav_bytes(data, volume=None, pan_x=None, screen_w=None):
+    """WAV baytlarını afplay ile çal (bloklar; arka plan iş parçacığında çağır)."""
+    if not AFPLAY:
+        return
+    payload = data
+    if pan_x is not None:
+        payload = pan_wav_stereo(payload, pan_x, screen_w or 1920, master_vol=1.0)
+    with tempfile.NamedTemporaryFile(prefix="komur-", suffix=".wav", delete=False) as handle:
+        handle.write(payload)
+        tmp_path = handle.name
+    try:
+        command = [AFPLAY, tmp_path]
+        if volume is not None:
+            command += ["-v", f"{max(0.0, min(1.0, float(volume))):.2f}"]
+        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=60, check=False)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
 RATE = 22050
 _cache = {}
+_real_cache: dict[str, bytes] = {}
+_last_variant: dict[str, str] = {}
+_last_play_time = 0.0
 _lock = threading.Lock()
 
 
@@ -184,7 +244,56 @@ _MAKERS = {
 }
 
 
-def _clip(name, pitch_shift=None, pan_x=None, screen_w=1920):
+def _select_real_wav_path(name, pick_random=False):
+    """Return an existing real-cat WAV asset path for *name*, or None."""
+    variants = _REAL_WAV_VARIANTS.get(name)
+    if not variants:
+        return None
+    existing = [
+        fn for fn in variants
+        if os.path.exists(os.path.join(ASSETS_DIR, fn))
+    ]
+    if not existing:
+        return None
+    if not pick_random or len(existing) == 1:
+        chosen = existing[0]
+    else:
+        with _lock:
+            prev = _last_variant.get(name)
+            pool = [fn for fn in existing if fn != prev] or existing
+            chosen = random.choice(pool)
+            _last_variant[name] = chosen
+    return os.path.join(ASSETS_DIR, chosen)
+
+
+def _load_real_wav_bytes(path):
+    with _lock:
+        cached = _real_cache.get(path)
+    if cached is not None:
+        return cached
+    with open(path, "rb") as f:
+        data = f.read()
+    with _lock:
+        _real_cache[path] = data
+    return data
+
+
+def _clip(name, pitch_shift=None, pan_x=None, screen_w=1920, pick_random=False):
+    real_path = _select_real_wav_path(name, pick_random=pick_random)
+    if real_path is not None:
+        data = _load_real_wav_bytes(real_path)
+        if pitch_shift is not None:
+            factor = (
+                random_pitch_factor(low=0.95, high=1.05)
+                if pitch_shift == "auto"
+                else float(pitch_shift)
+            )
+            if abs(factor - 1.0) > 1e-4:
+                data = pitch_shift_wav(data, factor)
+        if pan_x is not None:
+            data = pan_wav_stereo(data, pan_x, screen_w or 1920, master_vol=1.0)
+        return data
+
     if name not in _MAKERS:
         return None
     if pitch_shift is not None or pan_x is not None:
@@ -204,24 +313,41 @@ def _clip(name, pitch_shift=None, pan_x=None, screen_w=1920):
 
 def _run(name, pitch_shift=None, pan_x=None, screen_w=1920):
     try:
-        clip = _clip(name, pitch_shift=pitch_shift, pan_x=pan_x, screen_w=screen_w)
-        if clip is None or winsound is None:
+        clip = _clip(
+            name,
+            pitch_shift=pitch_shift,
+            pan_x=pan_x,
+            screen_w=screen_w,
+            pick_random=True,
+        )
+        if clip is None:
             return
-        winsound.PlaySound(clip, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+        if winsound is not None:
+            winsound.PlaySound(clip, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+        elif AFPLAY:
+            play_wav_bytes(clip)
     except Exception:
         logging.exception("sound playback failed")
 
 
 def play(name="meow", enabled=True, pitch_shift=None, pan_x=None, screen_w=1920):
-    """Play a named clip without blocking the UI, with optional pitch shift and 2D stereo pan."""
-    if not (enabled and winsound and name in _MAKERS):
+    """Play a named clip without blocking the UI, preferring real cat WAV assets."""
+    global _last_play_time
+    if not (enabled and available() and (name in _MAKERS or name in _REAL_WAV_VARIANTS)):
         return
-    if name == "meow" and pitch_shift is None:
-        pitch_shift = random.uniform(0.92, 1.08)
+    now = time.monotonic()
+    with _lock:
+        if (now - _last_play_time) < MIN_PLAY_GAP_SEC:
+            return
+        _last_play_time = now
+    if (pitch_shift is None or pitch_shift == "auto") and name in _REAL_WAV_VARIANTS:
+        pitch_shift = random_pitch_factor(low=0.95, high=1.05)
+    elif name == "meow" and pitch_shift is None:
+        pitch_shift = random_pitch_factor(low=0.95, high=1.05)
     threading.Thread(
         target=_run, args=(name, pitch_shift, pan_x, screen_w), daemon=True
     ).start()
 
 
 def available():
-    return winsound is not None and sys.platform == "win32"
+    return (winsound is not None and sys.platform == "win32") or bool(AFPLAY)

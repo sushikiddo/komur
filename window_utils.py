@@ -1,4 +1,5 @@
-"""Saydam/üstte pencere ve ekran (monitör) yardımcıları; Windows'ta ctypes, değilse Tk geri dönüşü.
+"""Saydam/üstte pencere ve ekran (monitör) yardımcıları; Windows'ta user32, macOS'ta AppKit
+(ctypes ile), değilse Tk geri dönüşü.
 
 Yaprak modül: cat.py, companion.py ve panel.py bunu kullanır; hiçbiri cat'i içe aktarmaz
 (cat.py ``__main__`` olarak da çalıştığı için döngüsel içe aktarma ikinci kopya yükler).
@@ -6,15 +7,591 @@ Yaprak modül: cat.py, companion.py ve panel.py bunu kullanır; hiçbiri cat'i i
 from __future__ import annotations
 
 import ctypes
+import ctypes.util
 import os
 import sys
+import tkinter as tk
 from ctypes import wintypes
 
 from behavior import Bounds
 
 WIDTH, HEIGHT = 260, 280          # logical base size; scaled by the size setting
-BG = "#ff00ff"                    # transparent color key
 IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+# Saydam anahtar renk. macOS'ta "systemTransparent" kullanılamaz: Tk eski kareyi o renkle
+# boyayarak siler, saydam boyama hiçbir şeyi silmez ve kediler üst üste iz bırakır. Opak saf
+# siyah her karede gerçekten siler; Core Image filtresi de saf siyahı saydama çevirir.
+MAC_KEY = "#000000"
+BG = MAC_KEY if IS_MAC else "#ff00ff"
+
+
+def apply_color_key(window, key):
+    """``key`` rengiyle boyanan pikselleri saydam yap.
+
+    Windows: Tk renk anahtarı. macOS: Tk 9 ``-transparent`` penceresinin saydam alanlarını opak
+    saf siyah (#000000) boyuyor; pencere ekrana gelince içerik katmanına saf siyahı saydama
+    çeviren bir Core Image filtresi takılır ve pencere gölgesi kapatılır (bkz. ``_mac_key_out_black``).
+    Çizimler saf siyah kullanmamalı; kedinin siyahı #0a0d13'tür.
+    """
+    try:
+        if IS_WINDOWS:
+            window.wm_attributes("-transparentcolor", key)
+        elif IS_MAC:
+            window.wm_attributes("-transparent", True)
+            # Tk pencere stilini <Map>'ten sonra yeniden uygular (gölgeyi açar, seviyeyi sıfırlar);
+            # hemen ve 60ms sonra uygula ki ne titreme kalsın ne de geç oluşan katman kaçsın.
+            def _on_map(_event, w=window):
+                _mac_apply_window_chrome()
+                try:
+                    w.after(50, _mac_key_out_black)
+                except tk.TclError:
+                    pass
+            window.bind("<Map>", _on_map, add="+")
+            window.bind("<Destroy>", lambda _e: _mac_prune_keyed_windows(), add="+")
+    except tk.TclError:
+        pass
+
+
+class _FlatButton(tk.Label):
+    """macOS için tk.Button yerine geçen düz düğme: aqua tk.Button bg/fg renklerini yok sayıp
+    beyaz yerel düğme çizer. Label renkleri uygular; tıklama ve ``invoke`` komutu çalıştırır."""
+
+    def __init__(self, master=None, command=None, **kw):
+        super().__init__(master, **kw)
+        self._command = command
+        self.bind("<ButtonRelease-1>", lambda event: self.invoke(), add="+")
+
+    def configure(self, cnf=None, **kw):
+        if "command" in kw:
+            self._command = kw.pop("command")
+        return super().configure(cnf, **kw)
+
+    config = configure
+
+    def invoke(self):
+        if str(self.cget("state")) != "disabled" and self._command is not None:
+            return self._command()
+        return None
+
+
+Button = _FlatButton if IS_MAC else tk.Button
+
+
+class _CGPoint(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+class _CGSize(ctypes.Structure):
+    _fields_ = [("width", ctypes.c_double), ("height", ctypes.c_double)]
+
+
+class _CGRect(ctypes.Structure):
+    _fields_ = [("origin", _CGPoint), ("size", _CGSize)]
+
+
+class _ObjC:
+    """Objective-C çalışma zamanına ctypes ile ince erişim (yalnız macOS; ilk kullanımda yüklenir)."""
+
+    def __init__(self):
+        lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        ctypes.cdll.LoadLibrary(ctypes.util.find_library("AppKit"))
+        ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreImage.framework/CoreImage")
+        lib.objc_getClass.restype = ctypes.c_void_p
+        lib.objc_getClass.argtypes = [ctypes.c_char_p]
+        lib.sel_registerName.restype = ctypes.c_void_p
+        lib.sel_registerName.argtypes = [ctypes.c_char_p]
+        lib.object_getClass.restype = ctypes.c_void_p
+        lib.object_getClass.argtypes = [ctypes.c_void_p]
+        lib.object_getClassName.restype = ctypes.c_char_p
+        lib.object_getClassName.argtypes = [ctypes.c_void_p]
+        lib.class_getInstanceMethod.restype = ctypes.c_void_p
+        lib.class_getInstanceMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        lib.method_getImplementation.restype = ctypes.c_void_p
+        lib.method_getImplementation.argtypes = [ctypes.c_void_p]
+        lib.class_replaceMethod.restype = ctypes.c_void_p
+        lib.class_replaceMethod.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p]
+        self.lib = lib
+        vp = ctypes.c_void_p
+
+        def proto(restype, *args):
+            return ctypes.CFUNCTYPE(restype, vp, vp, *args)(("objc_msgSend", lib))
+        self.send_void = proto(None)
+        self.send = proto(vp)
+        self.send_obj = proto(vp, vp)
+        self.send_obj2 = proto(vp, vp, vp)
+        self.send_index = proto(vp, ctypes.c_ulong)
+        self.send_int = proto(vp, ctypes.c_int)
+        self.get_int = proto(ctypes.c_int)
+        self.send_long = proto(None, ctypes.c_long)
+        self.get_long = proto(ctypes.c_long)
+        self.send_ulong = proto(None, ctypes.c_ulong)
+        self.get_ulong = proto(ctypes.c_ulong)
+        self.send_bytes = proto(vp, vp, ctypes.c_ulong)
+        self.send_bool = proto(None, ctypes.c_bool)
+        self.get_bool = proto(ctypes.c_bool)
+        self.get_bool_obj = proto(ctypes.c_bool, vp)
+        self.send_point = proto(_CGPoint)
+        self.send_rect = proto(_CGRect)
+        self.utf8 = proto(ctypes.c_char_p)
+        self._keyable_installed = False
+        self._keyable_imp = None
+        self._first_click_installed = False
+        self._accepts_first_mouse_imp = None
+        self._send_event_imp = None
+
+    def cls(self, name):
+        return self.lib.objc_getClass(name.encode())
+
+    def sel(self, name):
+        return self.lib.sel_registerName(name.encode())
+
+    def string(self, text):
+        return self.send_obj(self.cls("NSString"), self.sel("stringWithUTF8String:"),
+                             ctypes.c_char_p(text.encode()))
+
+    def to_str(self, nsstring):
+        if not nsstring:
+            return ""
+        raw = self.utf8(nsstring, self.sel("UTF8String"))
+        return raw.decode("utf-8", errors="replace") if raw else ""
+
+    def items(self, array):
+        if not array:
+            return []
+        count = int(self.send(array, self.sel("count")) or 0)
+        return [self.send_index(array, self.sel("objectAtIndex:"), i) for i in range(count)]
+
+    def make_keyable(self, nswindow):
+        """TKWindow sınıfında canBecomeKeyWindow'u KVO-güvenli olarak etkinleştir (isa değiştirmez)."""
+        if not nswindow or self._keyable_installed:
+            return
+        tk_cls = self.cls("TKWindow")
+        if not tk_cls:
+            return
+        sel_key = self.sel("canBecomeKeyWindow")
+        sel_title = self.sel("title")
+        method = self.lib.class_getInstanceMethod(tk_cls, sel_key)
+        orig_ptr = self.lib.method_getImplementation(method) if method else None
+        imp_type = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        orig_fn = imp_type(orig_ptr) if orig_ptr else None
+
+        def _can_become_key(self_ptr, cmd):
+            try:
+                title = self.to_str(self.send(self_ptr, sel_title))
+                if title in _KEYABLE_TITLES:
+                    return True
+            except Exception:
+                pass
+            return bool(orig_fn(self_ptr, cmd)) if orig_fn else False
+
+        self._keyable_imp = imp_type(_can_become_key)
+        self.lib.class_replaceMethod(
+            tk_cls, sel_key, ctypes.cast(self._keyable_imp, ctypes.c_void_p), b"B@:",
+        )
+        self._keyable_installed = True
+
+    def install_first_click_support(self):
+        """macOS ilk tıklama ve pasif iki parmak sağ tık desteği CoreGraphics olay sayaçlarıyla
+        (``poll_mac_right_clicks``) ana Python döngüsünde işlenir; Tcl/Tk olay döngüsü içinden
+        yeniden Python çağıran ``sendEvent:`` ctypes kancası kullanılmaz (PyEval_RestoreThread
+        çökmesini önler).
+        """
+        self._first_click_installed = True
+
+
+_objc = None
+_cg_lib = None
+_black_key = None              # paylaşılan CIFilter (bir kez kurulur)
+_keyed_windows = set()          # filtresi takılmış NSWindow işaretçileri
+_right_click_handlers: dict[str, tuple[tk.Misc, object]] = {}
+_last_left_click_was_active: bool = True
+_mac_last_rc: int | None = None
+_mac_last_lc: int | None = None
+_CUBE = 64                     # #0a0d13 gibi koyu renkler ilk hücrenin dışında kalsın diye 64
+_KEYABLE_TITLES = {"Kömür — Hızlı Menü", "Kömür — komut"}
+_ELEVATED_TITLES = {"Kömür — Hızlı Menü", "Kömür — komut", "Kömür — konuşma"}
+_NS_FLOATING_LEVEL = 1000      # kCGScreenSaverWindowLevel: tam ekran video ve Spaces üstünde kalır
+_NS_ELEVATED_LEVEL = 1001      # Menü, konuşma ve sohbet balonları her zaman kedilerin üstünde
+# CanJoinAllSpaces | Stationary | IgnoresCycle | FullScreenAuxiliary
+_NS_COLLECTION_ALL_SPACES = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)
+_NS_DOCMODAL_MASK = 64
+
+
+def _objc_runtime():
+    global _objc
+    if _objc is None:
+        _objc = _ObjC()
+    return _objc
+
+
+_INK = (0x0a / 255, 0x0d / 255, 0x13 / 255)   # kedinin dış çizgi rengi (renderer.INK)
+# Kenar yumuşatma, çizginin kenarını siyah zeminle karıştırır. 0.032 (~8/255) eşiği saf siyahı
+# saydam, kenar geçişini yumuşak tutar; gece (#030509) ve göbek (#080a0e) dahil tüm koyu kürkler
+# %100 opak kalır ve arkadaki açık zemin kedinin üstünde gri sızıntı yapmaz.
+_KEY_RAMP = 0.032
+
+
+def _key_color(r, g, b):
+    """Küpün bir noktası için önceden çarpılmış (premultiplied) RGBA: siyah saydam, siyah ile
+    _KEY_RAMP arası INK renginde kademeli saydam, gerisi aynen opak."""
+    level = max(r, g, b)
+    if level >= _KEY_RAMP:
+        return (r, g, b, 1.0)
+    alpha = level / _KEY_RAMP
+    return (_INK[0] * alpha, _INK[1] * alpha, _INK[2] * alpha, alpha)
+
+
+def _black_key_filter(o):
+    """sRGB'de saf siyahı saydam yapan, kenar geçişlerini yumuşatan CIColorCubeWithColorSpace filtresi."""
+    global _black_key
+    if _black_key is None:
+        n = _CUBE
+        steps = [i / (n - 1) for i in range(n)]
+        values = []
+        for b in steps:
+            for g in steps:
+                for r in steps:
+                    values.extend(_key_color(r, g, b))
+        cube = (ctypes.c_float * len(values))(*values)
+        data = o.send_bytes(o.cls("NSData"), o.sel("dataWithBytes:length:"),
+                            ctypes.addressof(cube), ctypes.sizeof(cube))
+        cg = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreGraphics"))
+        cg.CGColorSpaceCreateWithName.restype = ctypes.c_void_p
+        cg.CGColorSpaceCreateWithName.argtypes = [ctypes.c_void_p]
+        srgb = cg.CGColorSpaceCreateWithName(ctypes.c_void_p.in_dll(cg, "kCGColorSpaceSRGB"))
+        key_filter = o.send_obj(o.cls("CIFilter"), o.sel("filterWithName:"),
+                                o.string("CIColorCubeWithColorSpace"))
+        set_value = o.sel("setValue:forKey:")
+        o.send_obj2(key_filter, set_value, o.send_int(o.cls("NSNumber"), o.sel("numberWithInt:"), n),
+                    o.string("inputCubeDimension"))
+        o.send_obj2(key_filter, set_value, data, o.string("inputCubeData"))
+        o.send_obj2(key_filter, set_value, srgb, o.string("inputColorSpace"))
+        o.send(key_filter, o.sel("retain"))
+        _black_key = key_filter
+    return _black_key
+
+
+def _mac_prune_keyed_windows():
+    """Kapanmış NSWindow işaretçilerini önbellekten temizle (dangling pointer önleme)."""
+    if not _keyed_windows:
+        return
+    try:
+        o = _objc_runtime()
+        app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+        live = set(o.items(o.send(app, o.sel("windows"))))
+        _keyed_windows.intersection_update(live)
+    except (OSError, AttributeError, TypeError, ValueError):
+        _keyed_windows.clear()
+
+
+def _is_tk_nswindow(o, window) -> bool:
+    """NSStatusBarWindow / sistem pencerelerini atla; yalnız Tk pencerelerini işle."""
+    try:
+        name = o.lib.object_getClassName(window) or b""
+        return b"TKWindow" in name
+    except Exception:
+        return False
+
+
+def _mac_apply_window_chrome(order_front=False):
+    """Opak olmayan pencerelerin seviye, gölge, zemin, Spaces ve odak özelliklerini anında uygula."""
+    try:
+        o = _objc_runtime()
+        o.install_first_click_support()
+        app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+        windows = o.items(o.send(app, o.sel("windows")))
+        clear = o.send(o.cls("NSColor"), o.sel("clearColor"))
+        for window in windows:
+            if not _is_tk_nswindow(o, window) or o.get_bool(window, o.sel("isOpaque")):
+                continue
+            title = o.to_str(o.send(window, o.sel("title")))
+            o.send_bool(window, o.sel("setHasShadow:"), False)
+            o.send_bool(window, o.sel("setHidesOnDeactivate:"), False)
+            o.send_obj(window, o.sel("setBackgroundColor:"), clear)
+            style = o.get_ulong(window, o.sel("styleMask"))
+            if style & _NS_DOCMODAL_MASK:
+                o.send_ulong(window, o.sel("setStyleMask:"), style & ~_NS_DOCMODAL_MASK)
+            target_level = _NS_ELEVATED_LEVEL if title in _ELEVATED_TITLES else _NS_FLOATING_LEVEL
+            if o.get_long(window, o.sel("level")) != target_level:
+                o.send_long(window, o.sel("setLevel:"), target_level)
+            o.send_ulong(window, o.sel("setCollectionBehavior:"), _NS_COLLECTION_ALL_SPACES)
+            if title in _KEYABLE_TITLES:
+                o.make_keyable(window)
+            if order_front and o.get_bool(window, o.sel("isVisible")):
+                o.send_void(window, o.sel("orderFrontRegardless"))
+    except (OSError, AttributeError, TypeError, ValueError):
+        pass
+
+
+def _mac_key_out_black():
+    """Opak olmayan (``-transparent``) Tk pencerelerine siyah anahtar filtresi, gölgesiz zemin,
+    yüzen pencere seviyesi ve gerektiğinde klavye odak yeteneği uygula."""
+    try:
+        _mac_apply_window_chrome()
+        o = _objc_runtime()
+        app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+        windows = o.items(o.send(app, o.sel("windows")))
+        live = set(windows)
+        _keyed_windows.intersection_update(live)
+        for window in windows:
+            if not _is_tk_nswindow(o, window) or o.get_bool(window, o.sel("isOpaque")):
+                continue
+            view = o.send(window, o.sel("contentView"))
+            if not view:
+                continue
+            o.send_bool(view, o.sel("setWantsLayer:"), True)
+            layer = o.send(view, o.sel("layer"))
+            if not layer:
+                continue
+            o.send_bool(layer, o.sel("setOpaque:"), False)
+            o.send_obj(layer, o.sel("setBackgroundColor:"), None)
+            existing_filters = o.send(layer, o.sel("filters"))
+            filter_count = int(o.send(existing_filters, o.sel("count")) or 0) if existing_filters else 0
+            if filter_count == 0 or window not in _keyed_windows:
+                o.send_bool(view, o.sel("setLayerUsesCoreImageFilters:"), True)
+                filters = o.send_obj(o.cls("NSArray"), o.sel("arrayWithObject:"), _black_key_filter(o))
+                o.send_obj(layer, o.sel("setFilters:"), filters)
+                o.send_bool(view, o.sel("setNeedsDisplay:"), True)
+                _keyed_windows.add(window)
+    except (OSError, AttributeError, TypeError, ValueError):
+        pass
+
+
+def ensure_floating(window, *, keyable=False, elevated=False):
+    """Pencerenin diğer uygulamaların üstünde yüzer seviyede kalmasını garantile."""
+    if keyable or elevated:
+        try:
+            title = window.wm_title()
+            if title:
+                if keyable:
+                    _KEYABLE_TITLES.add(title)
+                if elevated:
+                    _ELEVATED_TITLES.add(title)
+        except tk.TclError:
+            pass
+    try:
+        window.attributes("-topmost", True)
+    except tk.TclError:
+        pass
+    if IS_MAC:
+        _mac_apply_window_chrome(order_front=True)
+        try:
+            window.after(50, _mac_key_out_black)
+        except tk.TclError:
+            pass
+
+
+def mac_present_key_window(window):
+    """macOS'ta çerçevesiz etkileşimli pencereyi (HUD / Sohbet) öne getirip klavye odağı ver."""
+    if not IS_MAC:
+        return
+    try:
+        title = window.wm_title()
+        if title:
+            _KEYABLE_TITLES.add(title)
+            _ELEVATED_TITLES.add(title)
+        _mac_key_out_black()
+        o = _objc_runtime()
+        app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+        o.send_bool(app, o.sel("activateIgnoringOtherApps:"), True)
+        for nswin in o.items(o.send(app, o.sel("windows"))):
+            if title and o.to_str(o.send(nswin, o.sel("title"))) == title:
+                o.make_keyable(nswin)
+                o.send_long(nswin, o.sel("setLevel:"), _NS_ELEVATED_LEVEL)
+                o.send_obj(nswin, o.sel("makeKeyAndOrderFront:"), None)
+                break
+    except (OSError, AttributeError, TypeError, ValueError, tk.TclError):
+        pass
+
+
+def _set_last_left_click_was_active(value: bool) -> None:
+    global _last_left_click_was_active
+    _last_left_click_was_active = bool(value)
+
+
+def last_left_click_was_active() -> bool:
+    """macOS'ta son sol tıklama gerçekleşmeden önce uygulama zaten etkin miydi?"""
+    if not IS_MAC:
+        return True
+    return bool(_last_left_click_was_active)
+
+
+def register_mac_right_click(window, callback) -> None:
+    """Pencere başlığını macOS TKApplication.sendEvent: sağ-tık yöneticisine kaydet."""
+    if window is None or not callable(callback):
+        return
+    try:
+        title = window.wm_title()
+    except (tk.TclError, AttributeError):
+        return
+    if not title:
+        return
+    _right_click_handlers[title] = (window, callback)
+
+    def _on_destroy(event, w=window, t=title):
+        if getattr(event, "widget", None) is w:
+            cur = _right_click_handlers.get(t)
+            if cur is not None and cur[0] is w:
+                _right_click_handlers.pop(t, None)
+
+    try:
+        window.bind("<Destroy>", _on_destroy, add="+")
+    except (tk.TclError, AttributeError):
+        pass
+    if IS_MAC:
+        try:
+            _objc_runtime().install_first_click_support()
+        except (OSError, AttributeError, TypeError, ValueError):
+            pass
+
+
+def mac_app_is_active() -> bool:
+    """macOS'ta Kömür uygulaması şu an etkin (ön planda) mı?"""
+    if not IS_MAC:
+        return True
+    try:
+        o = _objc_runtime()
+        app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+        return bool(o.get_bool(app, o.sel("isActive")))
+    except (OSError, AttributeError, TypeError, ValueError):
+        return True
+
+
+def _cg_events():
+    """macOS CoreGraphics olay sayacı işlevlerini tembel yükle (sıfır kanca, sıfır izin istemi)."""
+    global _cg_lib
+    if _cg_lib is None:
+        cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cg.CGEventSourceCounterForEventType.argtypes = [ctypes.c_int32, ctypes.c_uint32]
+        cg.CGEventSourceCounterForEventType.restype = ctypes.c_uint32
+        cg.CGEventSourceFlagsState.argtypes = [ctypes.c_int32]
+        cg.CGEventSourceFlagsState.restype = ctypes.c_uint64
+        _cg_lib = cg
+    return _cg_lib
+
+
+def mac_right_click_counter() -> int:
+    """macOS sistem geneli sağ tık / iki parmak dokunma sayacı (kCGEventRightMouseDown = 3)."""
+    if not IS_MAC:
+        return 0
+    try:
+        return int(_cg_events().CGEventSourceCounterForEventType(1, 3))
+    except (OSError, AttributeError, TypeError, ValueError):
+        return 0
+
+
+def mac_left_click_counter() -> int:
+    """macOS sistem geneli sol tık sayacı (kCGEventLeftMouseDown = 1)."""
+    if not IS_MAC:
+        return 0
+    try:
+        return int(_cg_events().CGEventSourceCounterForEventType(1, 1))
+    except (OSError, AttributeError, TypeError, ValueError):
+        return 0
+
+
+def mac_control_key_down() -> bool:
+    """macOS Control tuşu basılı mı (kCGEventFlagMaskControl = 0x40000)."""
+    if not IS_MAC:
+        return False
+    try:
+        return bool(_cg_events().CGEventSourceFlagsState(1) & 0x40000)
+    except (OSError, AttributeError, TypeError, ValueError):
+        return False
+
+
+def mac_activate_app() -> None:
+    """macOS'ta Kömür uygulamasını güvenli biçimde (ana Python iş parçacığından) etkinleştir."""
+    if not IS_MAC:
+        return
+    try:
+        o = _objc_runtime()
+        app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+        if app and not o.get_bool(app, o.sel("isActive")):
+            o.send_bool(app, o.sel("activateIgnoringOtherApps:"), True)
+    except (OSError, AttributeError, TypeError, ValueError):
+        pass
+
+
+def _point_in_window(tk_win, px: float, py: float) -> bool:
+    try:
+        if not tk_win.winfo_viewable():
+            return False
+        wx = tk_win.winfo_rootx()
+        wy = tk_win.winfo_rooty()
+        ww = tk_win.winfo_width()
+        wh = tk_win.winfo_height()
+        return ww > 1 and wh > 1 and wx <= px <= wx + ww and wy <= py <= wy + wh
+    except (tk.TclError, AttributeError, TypeError, ValueError):
+        return False
+
+
+def poll_mac_right_clicks(pointer_xy) -> bool:
+    """Ana 60 FPS döngüsünden çağrılır: başka bir uygulama etkinken bile kedi üstünde yapılan
+    ilk iki parmak dokunma/sağ tık (veya Control+Tık) anında kayıtlı menü geri çağrısını açar.
+    """
+    global _mac_last_rc, _mac_last_lc
+    if not IS_MAC:
+        return False
+    rc = mac_right_click_counter()
+    lc = mac_left_click_counter()
+    if _mac_last_rc is None or _mac_last_lc is None:
+        _mac_last_rc = rc
+        _mac_last_lc = lc
+        return False
+
+    right_fired = rc != _mac_last_rc
+    left_fired = lc != _mac_last_lc
+    _mac_last_rc = rc
+    _mac_last_lc = lc
+
+    if not right_fired and not left_fired:
+        return False
+
+    is_secondary = right_fired or (left_fired and mac_control_key_down())
+    if is_secondary:
+        if pointer_xy is None:
+            return False
+        px, py = pointer_xy
+        for tk_win, cb in list(_right_click_handlers.values()):
+            if _point_in_window(tk_win, px, py):
+                mac_activate_app()
+                try:
+                    cb(int(round(px)), int(round(py)))
+                except Exception:
+                    pass
+                return True
+        return False
+
+    # Normal sol tık: uygulama pasifken kedi üstüne tıklandıysa "sev" tetiklemeden etkinleştir.
+    was_active = mac_app_is_active()
+    _set_last_left_click_was_active(was_active)
+    if not was_active and pointer_xy is not None:
+        px, py = pointer_xy
+        for tk_win, _cb in list(_right_click_handlers.values()):
+            if _point_in_window(tk_win, px, py):
+                mac_activate_app()
+                break
+    return False
+
+
+def _mac_screen_areas():
+    """[NSScreen screens] visibleFrame'leri (menü çubuğu ve Dock hariç), Tk ekran koordinatında.
+
+    Cocoa'da orijin ana ekranın sol altıdır; Tk'de sol üst. Sidecar/harici ekranlar dahil.
+    """
+    o = _objc_runtime()
+    screens = o.items(o.send(o.cls("NSScreen"), o.sel("screens")))
+    if not screens:
+        return []
+    primary_h = o.send_rect(screens[0], o.sel("frame")).size.height
+    areas = []
+    for screen in screens:
+        r = o.send_rect(screen, o.sel("visibleFrame"))
+        left, top = r.origin.x, primary_h - (r.origin.y + r.size.height)
+        areas.append(Bounds(round(left), round(top), round(left + r.size.width),
+                            round(top + r.size.height)))
+    return areas
 
 
 def enable_dpi_awareness():
@@ -59,6 +636,13 @@ def monitor_bounds(root):
         ctypes.windll.user32.EnumDisplayMonitors(None, None, callback, 0)
         if areas:
             return areas
+    elif IS_MAC:
+        try:
+            areas = _mac_screen_areas()
+        except (OSError, AttributeError, TypeError):
+            areas = []
+        if areas:
+            return areas
     return [Bounds(0, 0, root.winfo_screenwidth(), root.winfo_screenheight())]
 
 
@@ -70,13 +654,32 @@ def pointer_position(root):
     return root.winfo_pointerxy()
 
 
-def make_transparent(window):
+def make_transparent(window, *, keyable=False, elevated=False):
     """Apply the borderless, topmost, color-keyed transparency to a window."""
+    if IS_MAC:
+        _mac_prune_keyed_windows()
+    if IS_MAC and (keyable or elevated):
+        try:
+            title = window.wm_title()
+            if title:
+                if keyable:
+                    _KEYABLE_TITLES.add(title)
+                if elevated:
+                    _ELEVATED_TITLES.add(title)
+        except tk.TclError:
+            pass
+    # macOS: gizlenmemiş yeni Toplevel çerçevesiz yapılınca "docmodal" stiline düşer ve koyu,
+    # yuvarlak köşeli bir zemin çizer. Önce gizle, ayarla, görünürdüyse geri göster.
+    show_again = IS_MAC and window.wm_state() != "withdrawn"
+    if IS_MAC:
+        window.withdraw()
     window.configure(bg=BG)
     window.overrideredirect(True)
     window.attributes("-topmost", True)
-    if IS_WINDOWS:
-        window.wm_attributes("-transparentcolor", BG)
+    apply_color_key(window, BG)
+    if show_again:
+        window.deiconify()
+        ensure_floating(window, keyable=keyable, elevated=elevated)
 
 
 def place_window(window, x, y, w, h):
@@ -152,29 +755,159 @@ def _ignore_set(ignore_hwnds):
     return {ignore_hwnds} if isinstance(ignore_hwnds, int) else set(ignore_hwnds)
 
 
+_MAC_SYSTEM_OWNERS = frozenset({
+    "Dock", "Window Server", "Wallpaper", "Control Center",
+    "Notification Center", "Spotlight", "SystemUIServer", "loginwindow",
+})
+
+
+def _mac_cg_lib():
+    cg = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreGraphics"))
+    cf = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+    cg.CGWindowListCopyWindowInfo.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    cg.CGWindowListCopyWindowInfo.restype = ctypes.c_void_p
+    cg.CGRectMakeWithDictionaryRepresentation.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(_CGRect),
+    ]
+    cg.CGRectMakeWithDictionaryRepresentation.restype = ctypes.c_bool
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+    return cg, cf
+
+
+def _mac_cg_windows():
+    """macOS ekrandaki normal uygulama pencereleri (kendi sürecimiz ve sistem çubukları hariç)."""
+    if not IS_MAC:
+        return []
+    try:
+        o = _objc_runtime()
+        cg, cf = _mac_cg_lib()
+        # kCGWindowListOptionOnScreenOnly (1) | kCGWindowListExcludeDesktopElements (16)
+        arr = cg.CGWindowListCopyWindowInfo(17, 0)
+        if not arr:
+            return []
+        own_pid = os.getpid()
+        out = []
+        try:
+            k_layer = o.string("kCGWindowLayer")
+            k_owner = o.string("kCGWindowOwnerName")
+            k_name = o.string("kCGWindowName")
+            k_num = o.string("kCGWindowNumber")
+            k_pid = o.string("kCGWindowOwnerPID")
+            k_bounds = o.string("kCGWindowBounds")
+            sel_key = o.sel("objectForKey:")
+            sel_int = o.sel("intValue")
+            for item in o.items(arr):
+                layer_obj = o.send_obj(item, sel_key, k_layer)
+                if not layer_obj or o.get_int(layer_obj, sel_int) != 0:
+                    continue
+                pid_obj = o.send_obj(item, sel_key, k_pid)
+                pid = o.get_int(pid_obj, sel_int) if pid_obj else 0
+                if pid == own_pid or pid <= 0:
+                    continue
+                owner = o.to_str(o.send_obj(item, sel_key, k_owner))
+                if owner in _MAC_SYSTEM_OWNERS:
+                    continue
+                bounds_obj = o.send_obj(item, sel_key, k_bounds)
+                if not bounds_obj:
+                    continue
+                rect = _CGRect()
+                if not cg.CGRectMakeWithDictionaryRepresentation(bounds_obj, ctypes.byref(rect)):
+                    continue
+                if rect.size.width < 80 or rect.size.height < 40:
+                    continue
+                wid_obj = o.send_obj(item, sel_key, k_num)
+                wid = o.get_int(wid_obj, sel_int) if wid_obj else 0
+                if wid <= 0:
+                    continue
+                title = o.to_str(o.send_obj(item, sel_key, k_name))
+                l, t = round(rect.origin.x), round(rect.origin.y)
+                r, b = round(rect.origin.x + rect.size.width), round(rect.origin.y + rect.size.height)
+                out.append({"wid": wid, "pid": pid, "owner": owner, "title": title, "rect": (l, t, r, b)})
+        finally:
+            cf.CFRelease(arr)
+        return out
+    except (OSError, AttributeError, TypeError, ValueError):
+        return []
+
+
+def mac_foreground_window_info(ignore_hwnds=None):
+    """macOS ön plandaki (Kömür hariç) uygulama penceresi bilgisi veya None."""
+    if not IS_MAC:
+        return None
+    ignore = _ignore_set(ignore_hwnds) or set()
+    windows = [w for w in _mac_cg_windows() if w["wid"] not in ignore]
+    try:
+        o = _objc_runtime()
+        ws = o.send(o.cls("NSWorkspace"), o.sel("sharedWorkspace"))
+        front = o.send(ws, o.sel("frontmostApplication"))
+        front_pid = o.get_int(front, o.sel("processIdentifier")) if front else 0
+        front_name = o.to_str(o.send(front, o.sel("localizedName"))) if front else ""
+        if front_pid and front_pid != os.getpid():
+            for w in windows:
+                if w["pid"] == front_pid:
+                    return w
+            if front_name and front_name not in _MAC_SYSTEM_OWNERS:
+                return {"wid": 0, "pid": front_pid, "owner": front_name, "title": "", "rect": None}
+    except (OSError, AttributeError, TypeError, ValueError):
+        pass
+    return windows[0] if windows else None
+
+
+def _mac_dock_rect():
+    """macOS Dock alanı (ekran koordinatında); Dock gizliyse ekranın alt şeridi."""
+    try:
+        o = _objc_runtime()
+        screens = o.items(o.send(o.cls("NSScreen"), o.sel("screens")))
+        if not screens:
+            return None
+        frame = o.send_rect(screens[0], o.sel("frame"))
+        vis = o.send_rect(screens[0], o.sel("visibleFrame"))
+        primary_h = frame.size.height
+        left = round(vis.origin.x)
+        right = round(vis.origin.x + vis.size.width)
+        vis_bottom = round(primary_h - vis.origin.y)
+        full_bottom = round(primary_h)
+        if full_bottom - vis_bottom >= 16:
+            return (left, vis_bottom, right, full_bottom)
+        return (left, max(0, vis_bottom - 4), right, vis_bottom)
+    except (OSError, AttributeError, TypeError, ValueError):
+        return None
+
+
 def foreground_hwnd(ignore_hwnds=None):
     """On plandaki (kendi sureclerimiz haric) kullanilabilir pencerenin hwnd'si ya da None."""
-    if not IS_WINDOWS:
-        return None
-    try:
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
-        return int(hwnd) if _usable_hwnd(user32, hwnd, _ignore_set(ignore_hwnds)) else None
-    except (AttributeError, OSError):
-        return None
+    if IS_WINDOWS:
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            return int(hwnd) if _usable_hwnd(user32, hwnd, _ignore_set(ignore_hwnds)) else None
+        except (AttributeError, OSError):
+            return None
+    if IS_MAC:
+        info = mac_foreground_window_info(ignore_hwnds=ignore_hwnds)
+        return int(info["wid"]) if info and info.get("wid") else None
+    return None
 
 
 def window_rect(hwnd):
     """Belirli pencerenin (left, top, right, bottom) kutusu; kapali/kucultulmus/gorunmezse None."""
-    if not IS_WINDOWS or not hwnd:
+    if not hwnd:
         return None
-    try:
-        user32 = ctypes.windll.user32
-        if not _usable_hwnd(user32, hwnd):
+    if IS_WINDOWS:
+        try:
+            user32 = ctypes.windll.user32
+            if not _usable_hwnd(user32, hwnd):
+                return None
+            return _rect_of(user32, hwnd)
+        except (AttributeError, OSError):
             return None
-        return _rect_of(user32, hwnd)
-    except (AttributeError, OSError):
+    if IS_MAC:
+        target = int(hwnd)
+        for w in _mac_cg_windows():
+            if w["wid"] == target:
+                return w["rect"]
         return None
+    return None
 
 
 def active_window_rect(ignore_hwnds=None):
@@ -184,22 +917,24 @@ def active_window_rect(ignore_hwnds=None):
 
 
 def taskbar_rect():
-    """Return (left, top, right, bottom) of the Windows taskbar, or None."""
-    if not IS_WINDOWS:
-        return None
-    try:
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW("Shell_TrayWnd", None)
-        if not hwnd or not user32.IsWindowVisible(hwnd):
+    """Return (left, top, right, bottom) of the taskbar (Windows) or Dock (macOS), or None."""
+    if IS_WINDOWS:
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW("Shell_TrayWnd", None)
+            if not hwnd or not user32.IsWindowVisible(hwnd):
+                return None
+            rect = wintypes.RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return None
+            if rect.right <= rect.left or rect.bottom <= rect.top:
+                return None
+            return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+        except (AttributeError, OSError):
             return None
-        rect = wintypes.RECT()
-        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-            return None
-        if rect.right <= rect.left or rect.bottom <= rect.top:
-            return None
-        return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
-    except (AttributeError, OSError):
-        return None
+    if IS_MAC:
+        return _mac_dock_rect()
+    return None
 
 
 def has_toast_notification():

@@ -17,7 +17,8 @@ from needs import HungryCatBrain
 
 class WindowUtilsFallbackTests(unittest.TestCase):
     def test_non_windows_fallbacks(self):
-        with mock.patch.object(window_utils, "IS_WINDOWS", False):
+        with mock.patch.object(window_utils, "IS_WINDOWS", False), \
+             mock.patch.object(window_utils, "IS_MAC", False):
             self.assertIsNone(window_utils.active_window_rect())
             self.assertIsNone(window_utils.taskbar_rect())
             self.assertFalse(window_utils.has_toast_notification())

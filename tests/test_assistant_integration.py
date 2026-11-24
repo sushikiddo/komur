@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ai import CatAI
+from commands import CommandEngine
 from behavior import Bounds, CatBrain
 from pc_actions import PCActions, PendingAction
 from settings import Settings
@@ -32,16 +32,6 @@ def test_folder_action_cannot_launch_script(tmp_path):
     assert not calls
 
 
-def test_api_uses_standard_messages_and_no_preview_fallback():
-    calls = []
-    def create(**kwargs):
-        calls.append(kwargs)
-        return SimpleNamespace(content=[{"type": "text", "text": "Merhaba!"}], stop_reason="end_turn")
-    client = SimpleNamespace(messages=SimpleNamespace(create=create))
-    ai = CatAI(Settings({"ai_backend": "api", "ai_api_key": "test"}).get,
-               PCActions(), lambda: "test", client_factory=lambda **kwargs: client)
-    assert ai.respond("selam").reply == "Merhaba!"
-    assert "fallbacks" not in calls[0] and "betas" not in calls[0]
 
 
 def test_ball_gravity_pounce_and_sleep_recovery():
@@ -63,29 +53,8 @@ def test_ball_gravity_pounce_and_sleep_recovery():
     assert brain.state == "stretch"
 
 
-def test_api_disconnect_after_action_does_not_repeat_via_fallback():
-    calls = []
-    def create(**kwargs):
-        if calls:
-            raise OSError("disconnected")
-        return SimpleNamespace(content=[{"type": "tool_use", "id": "one", "name": "open_app",
-                                         "input": {"name": "notepad"}}], stop_reason="tool_use")
-    actions = PCActions(resolver=lambda name: ("exec", ["notepad.exe"]), popen=calls.append)
-    ai = CatAI(Settings({"ai_backend": "api", "ai_api_key": "test"}).get, actions,
-               lambda: "test", client_factory=lambda **kw: SimpleNamespace(messages=SimpleNamespace(create=create)))
-    result = ai.respond("Bana bir yazı düzenleyici hazırlar mısın?")
-    assert len(calls) == 1
-    assert result.actions_done and result.error
 
 
-def test_cli_error_result_falls_back_without_claiming_ai_connection():
-    import subprocess
-    ai = CatAI(Settings({"ai_backend": "cli"}).get, PCActions(), lambda: "test",
-               which=lambda name: "claude.exe", cli_runner=lambda *a: subprocess.CompletedProcess(
-                   [], 1, '{"is_error":true,"result":"session limit"}', ""))
-    result = ai.respond("selam")
-    assert result.backend != "Claude Code CLI"
-    assert "session limit" in result.error
 
 
 def test_full_app_bubble_chat_and_all_poses(monkeypatch, tmp_path):
@@ -94,7 +63,7 @@ def test_full_app_bubble_chat_and_all_poses(monkeypatch, tmp_path):
     monkeypatch.setattr(cat.DesktopCat, "_register_hotkey", lambda self: None)
     monkeypatch.setattr(cat, "Tray", lambda **kwargs: SimpleNamespace(
         poll_show=lambda: False, poll_quit=lambda: False, close=lambda: None))
-    monkeypatch.setattr(cat.Settings, "load", lambda: Settings({"sound": False, "ai_backend": "offline"}))
+    monkeypatch.setattr(cat.Settings, "load", lambda: Settings({"sound": False}))
     app = cat.DesktopCat()
     try:
         assert (app.w, app.h) == (143, 154)
@@ -121,7 +90,7 @@ def test_full_app_bubble_chat_and_all_poses(monkeypatch, tmp_path):
             time.sleep(.01)
         assert not app.assistant.busy
         assert "Kömür:" in app.assistant.history.get("1.0", "end")
-        assert app.assistant.ai.transcript
+        assert app.assistant.commands.transcript
         app.assistant.request_behavior("roll")
         app.assistant.tick(time.monotonic())
         assert app.brain.state == "roll"
@@ -131,11 +100,5 @@ def test_full_app_bubble_chat_and_all_poses(monkeypatch, tmp_path):
         app.assistant.request_behavior("yawn")
         app.assistant.tick(time.monotonic())
         assert app.brain.state == "yawn"
-        app.assistant.api_key.set("private-test-key")
-        assert app.assistant.save_options()
-        assert app.assistant.get_option("ai_openai_key") == "private-test-key"
-        saved = (tmp_path / "Komur" / "settings.json").read_text(encoding="utf-8")
-        assert "private-test-key" not in saved
-        assert not app.assistant.api_key.get()
     finally:
         app.close()

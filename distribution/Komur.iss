@@ -1,5 +1,5 @@
 #define AppName "Kömür"
-#define AppVersion "2.2.2"
+#define AppVersion "2.3.0"
 #define AppPublisher "Kömür"
 
 [Setup]
@@ -32,19 +32,14 @@ Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 
 [Files]
 Source: "..\dist\Komur.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\bootstrap_setup.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\KULLANIM-AI.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
-Source: "..\build\distribution-licenses\*"; DestDir: "{app}\licenses"; Excludes: ".owned-by-komur-license-generator"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Kömür"; Filename: "{app}\Komur.exe"
-Name: "{group}\Kömür Kurulum Yardımcısı"; Filename: "{app}\bootstrap_setup.exe"
 Name: "{group}\Kömür'ü kaldır"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Kömür"; Filename: "{app}\Komur.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\bootstrap_setup.exe"; Description: "İsteğe bağlı ücretsiz AI ve ses özelliklerini ayarla"; Flags: postinstall nowait skipifsilent
 Filename: "{app}\Komur.exe"; Description: "Kömür'ü aç"; Flags: postinstall nowait skipifsilent unchecked
 
 [Code]

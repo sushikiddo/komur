@@ -1,5 +1,5 @@
 """Master v2.0 integration tests verifying all 5 slices wired into DesktopCat,
-settings, voice, and panel.
+settings and panel.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cat
 import panel
 import settings
-import voice
+
 
 
 @pytest.fixture(scope="module")
@@ -92,8 +92,6 @@ def test_desktop_cat_initializes_all_v2_subsystems(desktop_app):
     assert desktop_app.acoustic.purr is not None
     assert desktop_app.acoustic.keyboard is not None
     assert desktop_app.acoustic.lofi is not None
-    assert desktop_app.acoustic.tts is not None
-    assert desktop_app.acoustic.mic is not None
 
 
 def test_main_loop_targets_60fps(desktop_app, monkeypatch):
@@ -158,41 +156,6 @@ def test_slice2_physics_props_and_menu(desktop_app):
     assert "v2.0 Özellikler" in labels
 
 
-def test_slice3_acoustic_and_voice_tts_hook(desktop_app, monkeypatch):
-    # Keyboard reactive audio hook
-    calls = []
-    monkeypatch.setattr(cat.sound, "play", lambda name, enabled=True: calls.append(name))
-    for _ in range(5):
-        desktop_app._on_key_press(None)
-    assert "chirp" in calls
-
-    # Lofi toggle
-    desktop_app.acoustic.lofi.start = MagicMock(return_value=True)
-    desktop_app.acoustic.lofi.stop = MagicMock()
-    assert desktop_app.toggle_lofi_ambience() is True
-    assert desktop_app.settings.get("lofi_ambience") is True
-
-    # VoiceService NaturalTurkishTTS hook + SAPI fallback preservation
-    import acoustic_engine
-
-    class FakeTTS:
-        def __init__(self, speech_rate=0, sapi_fallback=None, **kwargs):
-            self.sapi_fallback = sapi_fallback
-
-        def speak_sync(self, text):
-            return "edge-tts"
-
-        def stop(self):
-            pass
-
-    monkeypatch.setattr(acoustic_engine, "NaturalTurkishTTS", FakeTTS)
-    svc = voice.VoiceService()
-    assert svc.speak("Merhaba Kömür") is True
-
-    # Disabled natural_tts falls back to SAPI (and returns False when no Turkish token)
-    monkeypatch.setattr(voice, "_turkish_voice_token", lambda: None)
-    svc_off = voice.VoiceService(natural_tts=False)
-    assert svc_off.speak("Merhaba") is False
 
 
 def test_slice4_persona_dreams_and_translator(desktop_app):
@@ -222,6 +185,8 @@ def test_slice5_affection_basket_fish_boss_key_and_panel(desktop_app, monkeypatc
     assert drop_results[0]["kind"] == "link"
 
     # Boss key via Ctrl+Shift+H when boss_key_mode=True
+    if desktop_app.shortcut is None:      # global kısayol yalnız Windows'ta kaydedilir; yoklama mantığını yine sına
+        desktop_app.shortcut = cat.PanelShortcut()
     desktop_app.settings.set("boss_key_mode", True)
     desktop_app.shortcut.boss_requested.set()
     desktop_app._poll_hotkey()
@@ -262,7 +227,8 @@ def test_hud_cards_reach_v22_features(desktop_app, monkeypatch):
     """Sağ tık HUD'u yeni özelliklere gerçekten ulaşır (eski tk.Menu yalnız yedek)."""
     hud = desktop_app.context_hud
     assert hud is not None
-    for key in ("yarn", "bowl", "post", "clipboard", "weather", "chat"):
+    assert "clipboard" not in hud.action_buttons
+    for key in ("yarn", "bowl", "post", "weather", "chat"):
         assert key in hud.action_buttons
     hud.action_buttons["yarn"].invoke()
     assert desktop_app.toybox.has("yarn")
@@ -270,7 +236,5 @@ def test_hud_cards_reach_v22_features(desktop_app, monkeypatch):
     assert not desktop_app.toybox.has("yarn")
     asked = []
     monkeypatch.setattr(desktop_app, "choose_weather_city", lambda: asked.append("weather"))
-    monkeypatch.setattr(desktop_app, "explain_clipboard", lambda: asked.append("clip"))
     hud.action_buttons["weather"].invoke()
-    hud.action_buttons["clipboard"].invoke()
-    assert asked == ["weather", "clip"]
+    assert asked == ["weather"]

@@ -129,10 +129,7 @@ def test_dream_engine_time_window_and_offline_fallback(tmp_path):
     store.remember("Python testlerini bitir")
     store.add_message("user", "Bugün pytest hata verdi")
 
-    def failing_opener(req, timeout=5.0):
-        raise OSError("Ollama offline")
-
-    engine = DreamEngine(store, opener=failing_opener)
+    engine = DreamEngine(store)
 
     # Gündüz uyanıkken rüya üretmez
     assert engine.generate_dream(is_sleeping=False, hour=14) is None
@@ -150,30 +147,6 @@ def test_dream_engine_time_window_and_offline_fallback(tmp_path):
     assert DreamEngine.is_dream_time(is_sleeping=False, hour=10) is False
 
 
-def test_dream_engine_uses_callback_and_ollama_when_available(tmp_path):
-    store = MemoryStore(tmp_path / "memory.sqlite3")
-    store.add_message("user", "Kahve içiyorum")
-
-    cb_engine = DreamEngine(store, ai_callback=lambda prompt: "Süt köpüğü denizinde yüzüyordum.")
-    res_cb = cb_engine.generate_dream(is_sleeping=True)
-    assert res_cb["dream_text"] == "Süt köpüğü denizinde yüzüyordum."
-    assert res_cb["bubble"] == "💭 Rüyasında: Süt köpüğü denizinde yüzüyordum."
-
-    class FakeResp(io.BytesIO):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            self.close()
-
-    def ok_opener(req, timeout=5.0):
-        body = json.dumps({"response": "Klavyenin üstünde balık sayıyordum."}).encode("utf-8")
-        return FakeResp(body)
-
-    ollama_engine = DreamEngine(store, opener=ok_opener)
-    res_ol = ollama_engine.generate_dream(is_sleeping=True)
-    assert res_ol["dream_text"] == "Klavyenin üstünde balık sayıyordum."
-    assert store.latest_dream()["dream_text"] == "Klavyenin üstünde balık sayıyordum."
 
 
 # ---------------------------------------------------------------------------
