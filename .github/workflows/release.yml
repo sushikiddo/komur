@@ -40,7 +40,8 @@ jobs:
       - name: Smoke-test frozen Komur.exe
         shell: pwsh
         run: |
-          .\dist\Komur.exe --smoke-test smoke-win.json
+          $p = Start-Process -FilePath ".\dist\Komur.exe" -ArgumentList "--smoke-test", "smoke-win.json" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Komur.exe exited with code $($p.ExitCode)" }
           Get-Content smoke-win.json
           python -c "import json; d=json.load(open('smoke-win.json')); assert d.get('ok') is True and d.get('frozen') is True"
 
