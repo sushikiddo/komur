@@ -1043,14 +1043,6 @@ class DesktopCat:
             except Exception:
                 logging.debug("Affection action failed", exc_info=True)
 
-        if name in ("pet", "feed", "play") and getattr(self, "affection", None) is not None:
-            try:
-                ev = self.affection.record_action(name)
-                if ev.get("leveled_up"):
-                    self.say(f"Dostluk Seviye {ev['level']} oldu! ✨", 6)
-            except Exception:
-                logging.debug("Affection action failed", exc_info=True)
-
         self._refresh_status()
 
     def _sync_effect_state(self):

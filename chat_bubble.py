@@ -193,15 +193,6 @@ class ChatBubble:
         self.messages.configure(state="disabled")
         self.messages.see("end")
 
-    def set_partial(self, text):
-        """Akan (henüz kesinleşmemiş) yanıt; kalıcı sohbet kaydına yazılmaz."""
-        text = str(text or "")
-        if text == self.partial:
-            return
-        self.partial = text
-        if self.visible:
-            self.refresh()
-
     def set_busy(self, busy):
         self.send_button.configure(state="disabled" if busy else "normal")
         self.status.set("Yapıyorum…" if busy else "Hazırım")

@@ -22,8 +22,6 @@ from acoustic_engine import (
     random_pitch_factor,
 )
 
-from acoustic_engine import apply_channel_pan, pitch_shift_wav, random_pitch_factor
-
 try:
     import pygame.mixer
 except Exception:  # pragma: no cover

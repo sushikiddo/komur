@@ -24,9 +24,6 @@ class AssistantUI:
     def __init__(self, app):
         self.app = app
         self.events = queue.Queue()
-        self.delta_events = queue.Queue()      # akan yanıt parçaları: (istek no, metin | None)
-        self._stream_id = 0
-        self._partial = ""
         self.behavior_requests = queue.Queue()
         self.chat_log = []
         self.compact = None
@@ -316,30 +313,6 @@ class AssistantUI:
             return True
         self.submit(self.commands.respond, text)
         return True
-
-    def respond_streaming(self, text, token):
-        """Worker iş parçacığı: parçaları yalnız kuyruğa koyar; Tk'ye tick() dokunur."""
-        return self.ai.respond(text, on_delta=lambda piece: self.delta_events.put((token, piece)))
-
-    def drain_deltas(self):
-        """Ana iş parçacığı: eski/iptal edilmiş isteklerin parçalarını at, geçerlileri baloncuğa yansıt."""
-        changed = False
-        while True:
-            try:
-                token, piece = self.delta_events.get_nowait()
-            except queue.Empty:
-                break
-            if token != self._stream_id or self._cancel_requested or self.closed:
-                continue
-            self._partial = "" if piece is None else (self._partial + piece)[-2000:]
-            changed = True
-        if changed and self.compact is not None:
-            self.compact.set_partial(self._partial)
-
-    def clear_partial(self):
-        self._partial = ""
-        if self.compact is not None:
-            self.compact.set_partial("")
 
     def tick(self, now):
         if self.closed:
