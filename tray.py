@@ -14,6 +14,7 @@ import sys
 import threading
 
 _WINDOWS = sys.platform == "win32"
+_MAC = sys.platform == "darwin"
 
 if _WINDOWS:
     from ctypes import wintypes
@@ -90,11 +91,98 @@ class Tray:
         self._thread = None
         self._wndproc = None
         self._ready = threading.Event()
+        self._tk_root = None
+        self._tk_image = None
+        self._tk_menu = None
+        self._on_toggle_hide = None
         if not _WINDOWS:
             return
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         self._ready.wait(1.0)
+
+    def attach_tk(self, root, on_toggle_hide=None):
+        """macOS Tk 9.1 yerel menü çubuğu simgesi (``tk systray``). Windows'ta yok sayılır."""
+        if not _MAC or root is None:
+            return
+        try:
+            import tkinter as tk
+            if str(root.tk.call("tk", "systray", "exists")) == "1":
+                root.tk.call("tk", "systray", "destroy")
+            img = tk.PhotoImage(width=18, height=18, master=root)
+            # 18x18 kedi silüeti (macOS menü çubuğu için net koyu ikon)
+            cat_rows = [
+                "..................",
+                "...##........##...",
+                "..####......####..",
+                "..#####....#####..",
+                "..##############..",
+                "..##############..",
+                ".################.",
+                ".###..######..###.",
+                ".###..######..###.",
+                ".################.",
+                ".#######..#######.",
+                "..##############..",
+                "...############...",
+                "....##########....",
+                ".....########.....",
+                "..................",
+                "..................",
+                "..................",
+            ]
+            for y, row in enumerate(cat_rows):
+                for x, ch in enumerate(row):
+                    if ch == "#":
+                        img.put("#111111", to=(x, y, x + 1, y + 1))
+            self._tk_root = root
+            self._tk_image = img
+            self._on_toggle_hide = on_toggle_hide
+            menu = tk.Menu(root, tearoff=False)
+            if callable(on_toggle_hide):
+                menu.add_command(label="Göster / Gizle", command=self._mac_toggle_hide)
+            menu.add_command(label="Kontrol paneli", command=self.show_requested.set)
+            menu.add_separator()
+            menu.add_command(label="Çıkış", command=self.quit_requested.set)
+            self._tk_menu = menu
+            root.tk.call(
+                "tk", "systray", "create",
+                "-image", img,
+                "-text", self._tooltip,
+                "-button1", root.register(self._mac_left_click),
+                "-button3", root.register(self._mac_right_click),
+            )
+            self.available = True
+        except Exception:
+            logging.debug("macOS systray attach failed", exc_info=True)
+
+    def _mac_toggle_hide(self):
+        if callable(self._on_toggle_hide):
+            try:
+                self._on_toggle_hide()
+            except Exception:
+                logging.debug("macOS tray toggle hide failed", exc_info=True)
+
+    def _mac_left_click(self):
+        # Gizliyse geri getir, değilse kontrol panelini aç.
+        if self._tk_root is not None:
+            try:
+                if self._tk_root.wm_state() == "withdrawn" and callable(self._on_toggle_hide):
+                    self._on_toggle_hide()
+                    return
+            except Exception:
+                pass
+        self.show_requested.set()
+
+    def _mac_right_click(self):
+        if self._tk_menu is None or self._tk_root is None:
+            self.show_requested.set()
+            return
+        try:
+            x, y = self._tk_root.winfo_pointerxy()
+            self._tk_menu.tk_popup(x, y)
+        except Exception:
+            self.show_requested.set()
 
     # -- Win32 thread -----------------------------------------------------
     def _run(self):
@@ -246,6 +334,15 @@ class Tray:
         return False
 
     def close(self):
+        if _MAC and self._tk_root is not None:
+            try:
+                if str(self._tk_root.tk.call("tk", "systray", "exists")) == "1":
+                    self._tk_root.tk.call("tk", "systray", "destroy")
+            except Exception:
+                pass
+            self._tk_root = None
+            self._tk_image = None
+            self._tk_menu = None
         if _WINDOWS and self._hwnd:
             try:
                 ctypes.windll.user32.PostMessageW(self._hwnd, WM_CLOSE, 0, 0)

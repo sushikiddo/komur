@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import sys
+
+_IS_MAC = sys.platform == "darwin"
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -609,7 +612,7 @@ class RetroPixelFilter:
             except Exception:
                 continue
 
-        if scanlines:
+        if scanlines and not (_IS_MAC and hasattr(canvas, "tk")):
             tags = (tag, dither_tag) if tag else dither_tag
             for idx, y in enumerate(range(0, int(height), self.scanline_step)):
                 stipple = "gray50" if idx % 2 == 0 else "gray25"
@@ -655,8 +658,18 @@ def draw_laser_dot(canvas, x: float, y: float, t: float = 0.0, scale: float = 1.
     s = float(scale)
     r_outer = 8.0 * s * (1.0 + 0.25 * math.sin(float(t) * 14.0))
     r_inner = 3.5 * s
+    if _IS_MAC and hasattr(canvas, "tk"):
+        outer = canvas.create_oval(
+            x - r_outer, y - r_outer, x + r_outer, y + r_outer,
+            fill="", outline="#ff4d6d", width=max(1.0, 1.5 * s), tags=tag,
+        )
+    else:
+        outer = canvas.create_oval(
+            x - r_outer, y - r_outer, x + r_outer, y + r_outer,
+            fill="#ff4d6d", outline="", stipple="gray50", tags=tag,
+        )
     return [
-        canvas.create_oval(x - r_outer, y - r_outer, x + r_outer, y + r_outer, fill="#ff4d6d", outline="", stipple="gray50", tags=tag),
+        outer,
         canvas.create_oval(x - r_inner, y - r_inner, x + r_inner, y + r_inner, fill="#ff0a2f", outline="#fff0f3", width=1, tags=tag),
     ]
 
@@ -715,8 +728,11 @@ class PawPrintTrail:
             pass
         s = float(scale)
         items: list[int] = []
+        mac_tk = _IS_MAC and hasattr(canvas, "tk")
         for p in self.prints:
             life = 1.0 - _clamp(p.age / p.ttl, 0.0, 1.0)
+            if mac_tk and life < 0.35:
+                continue
             if life > 0.72:
                 stipple = "gray75"
             elif life > 0.45:
@@ -728,17 +744,19 @@ class PawPrintTrail:
 
             # Main pad + 3 toe beans rotated by p.angle
             cos_a, sin_a = math.cos(p.angle), math.sin(p.angle)
-            r_pad = 4.2 * s
+            ps = s * (0.45 + 0.55 * life) if mac_tk else s
+            kw = {} if mac_tk else {"stipple": stipple}
+            r_pad = 4.2 * ps
             items.append(canvas.create_oval(
                 p.x - r_pad, p.y - r_pad * 0.8, p.x + r_pad, p.y + r_pad * 0.8,
-                fill="#52606d", outline="", stipple=stipple, tags=tag,
+                fill="#52606d", outline="", tags=tag, **kw,
             ))
             for ox, oy in ((-4.2, -5.5), (0.0, -6.8), (4.2, -5.5)):
-                tx = p.x + (ox * cos_a - oy * sin_a) * s
-                ty = p.y + (ox * sin_a + oy * cos_a) * s
-                rt = 1.9 * s
+                tx = p.x + (ox * cos_a - oy * sin_a) * ps
+                ty = p.y + (ox * sin_a + oy * cos_a) * ps
+                rt = 1.9 * ps
                 items.append(canvas.create_oval(
                     tx - rt, ty - rt, tx + rt, ty + rt,
-                    fill="#52606d", outline="", stipple=stipple, tags=tag,
+                    fill="#52606d", outline="", tags=tag, **kw,
                 ))
         return items

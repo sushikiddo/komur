@@ -76,27 +76,19 @@ class FakeWidget:
 
 
 class TestCatBasketDropTarget(unittest.TestCase):
-    def test_image_drop_reads_dimensions_and_calls_ai_vision(self):
+    def test_image_drop_reads_dimensions(self):
         with tempfile.TemporaryDirectory() as tmp:
             img_path = Path(tmp) / "screen.png"
             img_path.write_bytes(_minimal_png_bytes(64, 32))
 
-            vision_calls = []
-
-            class FakeVisionAI:
-                def analyze_image(self, path, prompt=None):
-                    vision_calls.append((path, prompt))
-                    return "Ekranda bir terminal penceresi görünüyor."
-
             basket = CatBasketDropTarget()
-            res = basket.handle_drop(f'"{img_path}"', ai_client=FakeVisionAI())
+            res = basket.handle_drop(f'"{img_path}"')
 
             self.assertTrue(res["ok"])
             self.assertEqual(res["action"], "vision_analyze")
             self.assertEqual(res["dimensions"], (64, 32))
             self.assertEqual(res["size_bytes"], img_path.stat().st_size)
-            self.assertIn("terminal penceresi", res["summary"])
-            self.assertEqual(len(vision_calls), 1)
+            self.assertIn("screen.png (64x32", res["summary"])
 
     def test_image_drop_without_ai_provides_local_summary(self):
         basket = CatBasketDropTarget()
@@ -107,7 +99,7 @@ class TestCatBasketDropTarget(unittest.TestCase):
             self.assertEqual(res["extension"], ext)
             self.assertIn(f"photo{ext}", res["summary"])
 
-    def test_code_file_drop_detects_errors_defs_classes_and_calls_ai(self):
+    def test_code_file_drop_detects_errors_defs_classes(self):
         with tempfile.TemporaryDirectory() as tmp:
             py_path = Path(tmp) / "worker.py"
             py_path.write_text(
@@ -118,12 +110,8 @@ class TestCatBasketDropTarget(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            class FakeSummaryAI:
-                def respond(self, prompt):
-                    return SimpleNamespace(reply="JobRunner.run içinde ValueError fırlatılıyor.")
-
             basket = CatBasketDropTarget()
-            res = basket.handle_drop(str(py_path), ai_client=FakeSummaryAI())
+            res = basket.handle_drop(str(py_path))
 
             self.assertTrue(res["ok"])
             self.assertEqual(res["action"], "summarize_code_or_log")
@@ -132,7 +120,7 @@ class TestCatBasketDropTarget(unittest.TestCase):
             self.assertEqual(res["defs"], ["run"])
             self.assertEqual(res["error_count"] if "error_count" in res else len(res["errors"]), 1)
             self.assertIn("ValueError", res["exceptions"])
-            self.assertIn("ValueError", res["summary"])
+            self.assertIn("worker.py: 4 satır", res["summary"])
 
     def test_multiline_log_text_drop_summarizes_without_ai(self):
         log_payload = (

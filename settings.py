@@ -13,30 +13,17 @@ APP_DIR_NAME = "Komur"
 FILE_NAME = "settings.json"
 
 DEFAULTS = {
-    "ai_enabled": True,
-    "ai_backend": "local",
-    "ai_model": "claude-sonnet-5-5",
-    "ai_cli_model": "",
-    "ai_api_key": "",
-    "ai_openai_model": "gpt-4o-mini",
-    "ai_openai_base_url": "https://api.openai.com/v1",
-    "ai_local_model": "qwen2.5:7b",
-    "ai_local_base_url": "http://127.0.0.1:11434/v1",
     "activity_context": False,
     "activity_reactions": True,
     "focus_mode": True,
-    "voice_preview": True,
-    "voice_input_device": None,
-    "speech_rate": 0,
     "history_enabled": True,
-    "voice_replies": False,
     "name": "Kömür",            # cat's name, shown in panel + greetings
     "skin": "komur",            # key into skins.SKINS
     "size": "small",            # small | normal | large | xlarge - default small
     "opacity": 100,             # 10..100 (percent)
     "sound": True,              # meow/purr sound effects
     "needs": True,              # hunger/needs system enabled
-    "autostart": False,         # launch with Windows (mirrors the registry)
+    "autostart": False,         # oturum açılınca başlat (Windows kayıt defteri / macOS LaunchAgent)
     "activity_level": "sakin",  # kendiliginden hareket: sakin | normal | hareketli
     "friends": 0,               # number of companion cats (0..3)
     "x": None,                  # last window position (screen px); None = default
@@ -52,7 +39,6 @@ DEFAULTS = {
     "greeting_on_start": True,    # program açılışında selamla
     "accessory": None,            # None | bow | scarf | hat | glasses
     "day_night": True,            # saate göre gece/akşam tonu
-    "wake_word": False,           # "Hey Kömür" dinleme (mikrofon) — varsayılan kapalı
     "user_plugins_enabled": False,  # %LOCALAPPDATA%\Komur\plugins yüklensin mi
     "habit_memory": True,         # alışkanlık sayacı + tek seferlik öneriler
     "update_check": True,         # günde en fazla bir kez GitHub'da yeni sürüm denetle (kurulum onaylı)
@@ -60,13 +46,13 @@ DEFAULTS = {
     "persona": "asil_tembel",     # v2.0 kişilik şablonu
     "retro_mode": False,          # v2.0 90'lar retro pixel filtresi
     "age_days": 7.0,              # v2.0 büyüme/yaşlanma (gün)
-    "boss_key_mode": True,        # v2.0 Ctrl+Shift+K patron tuşu modu
+    "boss_key_mode": True,        # v2.0 Ctrl+Shift+H patron tuşu modu
     "meow_subtitles": True,       # v2.0 kedi-insan altyazı çevirmeni
     "lofi_ambience": False,       # v2.0 odak lofi ambiyansı
     "affection_xp": 0,            # v2.0 dostluk XP
     "affection_level": 1,         # v2.0 dostluk seviyesi
-    "rubber_duck_mode": False,    # v2.0 lastik ördek hata ayıklama modu
-    "natural_tts": True,          # v2.0 doğal Türkçe TTS zinciri
+    "weather_enabled": False,     # v2.2 gerçek hava durumu (açıkken şehir adı Open-Meteo'ya gider)
+    "weather_city": "",
 }
 
 SIZE_SCALES = {"small": 0.55, "normal": 1.0, "large": 1.3, "xlarge": 1.6}
@@ -89,6 +75,8 @@ class Settings:
         self._data = dict(DEFAULTS)
         if data:
             self._data.update({k: v for k, v in data.items() if k in DEFAULTS})
+        if self._data.get("persona") not in ("asil_tembel", "hiperaktif_yavru"):
+            self._data["persona"] = DEFAULTS["persona"]   # kaldırılan kişilikler (bilge_yazilimci) varsayılana göç eder
 
     @classmethod
     def load(cls):

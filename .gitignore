@@ -13,3 +13,7 @@ exe-smoke*.json
 .claude/
 docs/previews/v5/
 dist-installer/
+live/
+.venv/
+release-artifacts/
+.DS_Store

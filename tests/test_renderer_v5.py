@@ -87,11 +87,12 @@ def test_evening_differs_from_day():
 
 
 def test_popcorn_visible_and_paws_on_rim():
+    # Video reaction uses a calm realistic watching posture (no cartoon popcorn bucket).
     base, _ = frame("sit", reaction="none")
-    corn, _ = frame("sit", reaction="video")
-    assert len(corn) > len(base) + 10
-    flat = repr(corn)
-    assert CatRenderer.CORN_BUCKET in flat and CatRenderer.CORN_STRIPE in flat
+    watch, _ = frame("sit", reaction="video")
+    assert watch != base
+    flat = repr(watch)
+    assert CatRenderer.CORN_BUCKET not in flat and CatRenderer.CORN_STRIPE not in flat
 
 
 def test_dance_tilts_head_only_for_music():

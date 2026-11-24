@@ -6,7 +6,9 @@ Düz fonksiyonlar ve hafif özel widget'lar; ``app`` DesktopCat örneğidir. Pan
 """
 from __future__ import annotations
 
+import os
 import types
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
 
@@ -15,6 +17,7 @@ import skins
 import sound
 from renderer import CatRenderer
 from settings import SIZE_LABELS, SIZE_SCALES
+from window_utils import Button
 
 TITLE = "Kömür — Kontrol paneli"
 
@@ -45,13 +48,11 @@ COSTUME_LABELS = {
 PERSONA_LABELS = {
     "asil_tembel": "Asil / Tembel (INTJ)",
     "hiperaktif_yavru": "Hiperaktif Yavru (ENFP)",
-    "bilge_yazilimci": "Bilge Yazılımcı (INTP)",
 }
 
 _PERSONA_FALLBACK_DESC = {
     "asil_tembel": "Ağırbaşlı, biraz üstten bakan ama içten seven asil smokin kedi.",
     "hiperaktif_yavru": "Çok enerjik, her şeye şaşıran, meraklı ve bol oyun isteyen neşeli kedi.",
-    "bilge_yazilimci": "Kod mimarisi, temiz kod ve algoritmik espriler yapan kıdemli geliştirici kedi.",
 }
 
 
@@ -421,12 +422,12 @@ def _make_card(parent, title: str | None = None, pady=(0, 10)) -> tk.Frame:
 
 
 def _make_button(parent, text: str, command, accent: bool = False,
-                 danger: bool = False, width: int | None = None) -> tk.Button:
+                 danger: bool = False, width: int | None = None) -> tk.Widget:
     base_bg = ACCENT if accent else (DANGER if danger else SURFACE_ALT)
     base_fg = BG_DARK if accent else TEXT_MAIN
     hover_bg = ACCENT_HOVER if accent else ("#f85149" if danger else "#30363d")
 
-    btn = tk.Button(
+    btn = Button(
         parent,
         text=text,
         command=command,
@@ -691,9 +692,12 @@ def build_look_tab(app, nb: ttk.Notebook):
               style="Komur.Horizontal.TScale", command=_on_opacity).pack(side="left", fill="x", expand=True)
 
     _lbl(4, "Arkadaş Sayısı")
-    ttk.Spinbox(grid, from_=0, to=3, width=6, textvariable=app.friends_var,
-                style="Komur.TSpinbox",
-                command=lambda: on_friends_change(app)).grid(row=4, column=1, sticky="w", pady=5)
+    friends_spin = ttk.Spinbox(grid, from_=0, to=3, width=6, textvariable=app.friends_var,
+                               style="Komur.TSpinbox",
+                               command=lambda: on_friends_change(app))
+    friends_spin.grid(row=4, column=1, sticky="w", pady=5)
+    friends_spin.bind("<Return>", lambda _e: on_friends_change(app))
+    friends_spin.bind("<FocusOut>", lambda _e: on_friends_change(app))
 
     card_costume = _make_card(left, "KOSTÜM & RETRO FİLTRE", pady=(0, 0))
     c_grid = tk.Frame(card_costume, bg=CARD_BG)
@@ -759,27 +763,7 @@ def build_persona_tab(app, nb: ttk.Notebook):
 
     persona_box.bind("<<ComboboxSelected>>", _on_select_persona)
 
-    card_modes = _make_card(tab, "ZEKA & HATA AYIKLAMA MODLARI")
-    duck_var = _ensure_var(
-        app, "rubber_duck_var",
-        lambda: tk.BooleanVar(value=bool(app.settings.get("rubber_duck_mode", False))),
-    )
-
-    def _on_duck_toggle():
-        if callable(getattr(app, "toggle_rubber_duck", None)):
-            active = bool(app.toggle_rubber_duck())
-            duck_var.set(active)
-        else:
-            app.settings.set("rubber_duck_mode", bool(duck_var.get()))
-
-    _make_toggle_row(
-        card_modes,
-        "Lastik Ördek Hata Ayıklama Modu",
-        duck_var,
-        _on_duck_toggle,
-        subtitle="Hazır kod yerine Sokratesçi sorularla hatayı buldurur",
-        on_color=ACCENT,
-    )
+    card_modes = _make_card(tab, "ZEKA MODLARI")
     _make_toggle_row(
         card_modes,
         "İhtiyaç & Ruh Hali Sistemi",
@@ -826,7 +810,7 @@ def build_audio_tab(app, nb: ttk.Notebook):
         "Sesler (2D Konumsal Stereo)",
         app.sound_var,
         lambda: on_sound_change(app),
-        subtitle="Miyavlama, mırlama ve ekrandaki konuma göre stereo panning",
+        subtitle="Yalnız sevme, esneme ve uyanma anlarında gerçek kedi sesi",
     )
 
     lofi_var = _ensure_var(
@@ -881,28 +865,11 @@ def build_audio_tab(app, nb: ttk.Notebook):
 
 # -- Sekme 4: Üretkenlik & Hareketler ---------------------------------------
 def _perch_on_active_window(app) -> None:
-    physics = getattr(app, "physics", None)
-    if physics is None:
-        app.say("Fizik motoru hazır değil.", 3)
+    fn = getattr(app, "perch_active_window", None)
+    if callable(fn):
+        fn()
         return
-    rect = None
-    try:
-        import window_utils
-        ignored = set()
-        if getattr(app, "root", None) is not None:
-            ignored.add(app.root.winfo_id())
-        if getattr(app, "panel", None) is not None and app.panel.winfo_exists():
-            ignored.add(app.panel.winfo_id())
-        rect = window_utils.active_window_rect(ignore_hwnds=ignored)
-    except Exception:
-        rect = None
-    if rect is None:
-        bx = float(getattr(app.brain, "x", 200.0))
-        by = float(getattr(app.brain, "y", 240.0))
-        rect = (bx - 80.0, max(60.0, by - 110.0), bx + 260.0, by + 120.0)
-    if physics.perch_on_window(rect, app.brain.x):
-        app.brain.move_to(physics.x, physics.y)
-        app.say("Pencereye tünedim! 🪟", 4)
+    app.say("Fizik motoru hazır değil.", 3)
 
 
 def build_productivity_tab(app, nb: ttk.Notebook):
@@ -921,7 +888,7 @@ def build_productivity_tab(app, nb: ttk.Notebook):
         ("🎾 Topla Oyna", lambda: app.command("play"), False),
         ("🪟 Pencereye Tüne", lambda: _perch_on_active_window(app), False),
         ("📦 Kutu Bırak", lambda: getattr(app, "toggle_box_prop", lambda: None)(), False),
-        ("🔴 Lazer Aç/Kapat", lambda: getattr(app, "toggle_laser", lambda: None)(), False),
+        ("🧶 İplik Yumağı", lambda: getattr(app, "toggle_toy", lambda _k: None)("yarn"), False),
         ("🕵️ Patron Tuşu Gizle", lambda: getattr(app, "toggle_boss_key", lambda: None)(), False),
         ("😴 Uyu / Uyan", lambda: app.command("wake" if app.brain.state == "sleep" else "sleep"), False),
         ("🐾 Gezin", lambda: app.command("wander"), False),
@@ -994,7 +961,7 @@ def build_productivity_tab(app, nb: ttk.Notebook):
     card_sys = _make_card(tab, "SİSTEM & PENCERE", pady=(0, 0))
     _make_toggle_row(
         card_sys,
-        "Windows ile Başlat",
+        "Oturum Açılınca Başlat",
         app.autostart_var,
         lambda: on_autostart_change(app),
         disabled=not autostart.available(),
@@ -1003,7 +970,7 @@ def build_productivity_tab(app, nb: ttk.Notebook):
     footer_row.pack(fill="x", pady=(6, 0))
     _make_button(footer_row, "Paneli Gizle", app.panel.withdraw).pack(side="left", fill="x", expand=True, padx=(0, 4))
     _make_button(footer_row, "Kömür'ü Kapat", app.close, danger=True).pack(side="left", fill="x", expand=True, padx=(4, 0))
-    tk.Label(card_sys, text="Günlük: %LOCALAPPDATA%\\Komur\\komur.log",
+    tk.Label(card_sys, text="Günlük: " + str(Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Komur" / "komur.log"),
              bg=CARD_BG, fg=TEXT_MUTED, font=("Segoe UI", 7)).pack(anchor="w", pady=(6, 0))
 
 
@@ -1045,7 +1012,12 @@ def on_opacity_change(app):
 
 
 def on_friends_change(app):
-    app.settings.set("friends", int(app.friends_var.get()))
+    try:
+        count = max(0, min(3, int(app.friends_var.get())))
+    except (ValueError, tk.TclError):
+        count = max(0, min(3, int(app.settings.get("friends") or 0)))
+    app.friends_var.set(count)
+    app.settings.set("friends", count)
     app._rebuild_companions()
     app._apply_opacity()
 
@@ -1053,8 +1025,18 @@ def on_friends_change(app):
 def on_sound_change(app):
     enabled = bool(app.sound_var.get())
     app.settings.set("sound", enabled)
-    if enabled:
-        sound.play("meow", enabled=True)
+    orchestrator = getattr(app, "effect_orchestrator", None)
+    if orchestrator is not None:
+        if callable(getattr(orchestrator, "set_sound", None)):
+            orchestrator.set_sound(enabled)
+        else:
+            orchestrator.sound_enabled = enabled
+    hud = getattr(app, "context_hud", None)
+    if hud is not None and callable(getattr(hud, "refresh", None)):
+        try:
+            hud.refresh()
+        except tk.TclError:
+            pass
 
 
 def on_needs_change(app):

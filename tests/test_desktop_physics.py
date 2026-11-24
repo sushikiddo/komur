@@ -17,7 +17,8 @@ from needs import HungryCatBrain
 
 class WindowUtilsFallbackTests(unittest.TestCase):
     def test_non_windows_fallbacks(self):
-        with mock.patch.object(window_utils, "IS_WINDOWS", False):
+        with mock.patch.object(window_utils, "IS_WINDOWS", False), \
+             mock.patch.object(window_utils, "IS_MAC", False):
             self.assertIsNone(window_utils.active_window_rect())
             self.assertIsNone(window_utils.taskbar_rect())
             self.assertFalse(window_utils.has_toast_notification())
@@ -57,8 +58,8 @@ class DesktopPhysicsTests(unittest.TestCase):
         self.assertAlmostEqual(x, 470.0)
         self.assertAlmostEqual(y, 410.0 - 280.0)
 
-        # Fast shake: hypot(200, 0) / 0.1 = 2000 > 900 triggers fall
-        shaken_rect = (520, 410, 1220, 910)
+        # Fast shake: hypot(800, 0) / 0.1 = 8000 > 5000 triggers fall
+        shaken_rect = (1120, 410, 1820, 910)
         self.physics.step(
             0.1, window_rect=shaken_rect, taskbar_rect=None, has_toast=False
         )
@@ -156,14 +157,8 @@ class DesktopPhysicsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.physics.spawn_prop("invalid", 10, 10)
 
-        box = self.physics.spawn_prop("box", 400, 700)
-        self.physics.x, self.physics.y = 350.0, 620.0
-        self.physics.step(0.1, window_rect=None, taskbar_rect=None, has_toast=False)
-        self.assertTrue(self.physics.in_box)
-        self.assertEqual(self.physics.surface, "box")
-        self.assertEqual(self.physics.active_prop, box)
-
-        self.physics.clear_props("box")
+        with self.assertRaises(ValueError):
+            self.physics.spawn_prop("box", 400, 700)   # kutu artık desktop_toys'ta
         bed = self.physics.spawn_prop("bed", 500, 720)
         self.physics.x, self.physics.y = 450.0, 630.0
         self.physics.step(0.1, window_rect=None, taskbar_rect=None, has_toast=False)

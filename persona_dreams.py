@@ -1,16 +1,12 @@
-"""Kömür — Dilim 4: Kişilik şablonları, gece rüya motoru, donanım zihni,
-lastik ördek hata ayıklama, Git/terminal izleyicisi ve kedi-insan çevirmeni.
+"""Kömür — Dilim 4: Kişilik şablonları, gece rüya motoru, donanım zihni
+ve kedi-insan çevirmeni.
 """
 from __future__ import annotations
 
 import datetime as _dt
-import json
 import math
 import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
@@ -46,19 +42,6 @@ PERSONA_TEMPLATES: dict[str, dict[str, Any]] = {
             "Kişilik Modu — Hiperaktif Yavru (ENFP): Kısa cümlelerinde yüksek enerji ve merak olsun. "
             "Her yeni dosya, pencere veya fikir seni heyecanlandırsın; araya minik oyun davetleri sıkıştır "
             "ama konudan kopma ve yardımcı olmaya devam et."
-        ),
-    },
-    "bilge_yazilimci": {
-        "id": "bilge_yazilimci",
-        "name": "Bilge Yazılımcı",
-        "mbti": "INTP",
-        "description": "Kod mimarisi, temiz kod ve algoritmik espriler yapan kıdemli geliştirici kedi.",
-        "traits": ["analitik", "mimari odaklı", "temiz kod savunucusu", "esprili", "sabırlı"],
-        "energy_bias": 0,
-        "system_prompt_addition": (
-            "Kişilik Modu — Bilge Yazılımcı (INTP): Kıdemli bir yazılım mimarı kedi gibi konuş. "
-            "Gerektiğinde temiz kod, karmaşıklık ve mimari benzetmelerle kısa espriler yap; "
-            "sorunları kök nedenine inerek çöz."
         ),
     },
 }
@@ -212,40 +195,14 @@ class HardwareMind:
 # ---------------------------------------------------------------------------
 # 3. Gece Rüya Motoru (DreamEngine)
 # ---------------------------------------------------------------------------
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-def _localhost_urlopen(request: urllib.request.Request, timeout: float = 5.0):
-    host = urllib.parse.urlsplit(request.full_url).hostname
-    if host not in ("localhost", "127.0.0.1", "::1"):
-        raise ValueError("DreamEngine Ollama yalnızca yerel adrese bağlanabilir.")
-    opener = urllib.request.build_opener(_NoRedirect(), urllib.request.ProxyHandler({}))
-    return opener.open(request, timeout=timeout)
-
-
 class DreamEngine:
-    """Uyku veya gece saatlerinde geçmiş konuşma/notlardan komik kedi rüyaları üretir."""
+    """Uyku veya gece saatlerinde gün içi notlardan hazır kalıplarla komik kedi rüyaları üretir (ağ yok)."""
 
     NIGHT_START_HOUR = 23
     NIGHT_END_HOUR = 6
 
-    def __init__(
-        self,
-        memory_store: MemoryStore,
-        ai_callback: Callable[[str], str] | None = None,
-        ollama_url: str = "http://127.0.0.1:11434/api/generate",
-        ollama_model: str = "llama3.2",
-        ollama_timeout: float = 5.0,
-        opener: Callable[..., Any] | None = None,
-    ) -> None:
+    def __init__(self, memory_store: MemoryStore) -> None:
         self.memory_store = memory_store
-        self.ai_callback = ai_callback
-        self.ollama_url = ollama_url
-        self.ollama_model = ollama_model
-        self.ollama_timeout = float(ollama_timeout)
-        self._opener = opener or _localhost_urlopen
 
     @classmethod
     def is_dream_time(cls, is_sleeping: bool = False, hour: int | None = None) -> bool:
@@ -268,45 +225,6 @@ class DreamEngine:
                 snippets.append(text[:120])
         summary = " | ".join(snippets[:6])[:500]
         return snippets, summary
-
-    def _build_prompt(self, snippets: list[str]) -> str:
-        context_block = "\n".join(f"- {redact(s)}" for s in snippets[:8]) or "- Masaüstünde sakin bir gün"
-        return (
-            "Sen uyuyan siyah-beyaz smokin kedi Kömür'sün. Aşağıdaki gün içi not ve konuşmalara "
-            "dayanarak tek ya da iki cümlelik komik, sevimli, kedi mantığıyla yazılmış bir rüya anlat. "
-            "Sadece Türkçe rüya metnini yaz, başlık veya emoji ekleme.\n\n"
-            f"Gün içi izler:\n{context_block}"
-        )
-
-    def _generate_via_callback(self, prompt: str) -> str | None:
-        if self.ai_callback is None:
-            return None
-        try:
-            reply = str(self.ai_callback(prompt) or "").strip()
-            return reply or None
-        except Exception:
-            return None
-
-    def _generate_via_ollama(self, prompt: str) -> str | None:
-        payload = json.dumps({
-            "model": self.ollama_model,
-            "prompt": prompt,
-            "stream": False,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            self.ollama_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with self._opener(req, timeout=self.ollama_timeout) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-            data = json.loads(raw)
-            text = str(data.get("response", "")).strip()
-            return text or None
-        except Exception:
-            return None
 
     @staticmethod
     def _pick_topic(snippets: list[str]) -> str:
@@ -367,13 +285,7 @@ class DreamEngine:
             return None
 
         snippets, source_summary = self.collect_source_context()
-        prompt = self._build_prompt(snippets)
-
-        dream_text = (
-            self._generate_via_callback(prompt)
-            or self._generate_via_ollama(prompt)
-            or self._synthesize_offline_dream(snippets)
-        )
+        dream_text = self._synthesize_offline_dream(snippets)
         dream_text = redact(dream_text).strip()[:4000]
         dream_id = self.memory_store.add_dream(dream_text, source_summary=source_summary)
         return {
@@ -394,216 +306,10 @@ class DreamEngine:
 
 
 # ---------------------------------------------------------------------------
-# 4. Lastik Ördek Hata Ayıklama (RubberDuckDebugger)
+# Yardımcı
 # ---------------------------------------------------------------------------
 def _tr_lower(text: str) -> str:
     return (text or "").replace("I", "ı").replace("İ", "i").lower()
-
-
-class RubberDuckDebugger:
-    """Kullanıcı kodda takıldığında hazır kod vermek yerine Sokratesçi sorularla yönlendirir."""
-
-    TRIGGER_PHRASES = (
-        "lastik ördek",
-        "rubber duck",
-        "bu kod neden çalışmıyor",
-        "hatayı bulamıyorum",
-    )
-    EXIT_PHRASES = (
-        "ördek modunu kapat",
-        "lastik ördeği kapat",
-        "modu kapat",
-        "çözdüm",
-        "hatayı buldum",
-    )
-    SOCRATIC_STEPS = (
-        "Önce büyük resme bakalım: Bu kod parçasından tam olarak ne çıktı bekliyordun ve şu an eline ne geçiyor?",
-        "Güzel. Bu satıra gelmeden hemen önce elindeki değişkenlerin ve girdilerin gerçek değerlerini adım adım kontrol ettin mi?",
-        "Peki buradaki koşul, döngü sınırı veya veri tipi beklentin dışında bir uç durumda nasıl davranıyor olabilir?",
-        "Sorunu en küçük parçaya indirgeyelim: Sadece şüpheli satırı tek başına sabit bir girdiyle çalıştırsan aynı sonucu mu verir?",
-        "Şimdi varsayımlarını sorgula: Doğru olduğundan %100 emin olduğun ama hiç log/print ile doğrulamadığın kısım hangisi?",
-    )
-
-    def __init__(self) -> None:
-        self.active: bool = False
-        self.step: int = 0
-        self.problem_context: str = ""
-        self.history: list[str] = []
-
-    @classmethod
-    def is_trigger(cls, text: str) -> bool:
-        norm = _tr_lower(text)
-        return any(phrase in norm for phrase in cls.TRIGGER_PHRASES)
-
-    @classmethod
-    def is_exit(cls, text: str) -> bool:
-        norm = _tr_lower(text)
-        return any(phrase in norm for phrase in cls.EXIT_PHRASES)
-
-    def activate(self, problem: str = "") -> None:
-        self.active = True
-        self.step = 0
-        self.problem_context = (problem or "").strip()
-        self.history = [self.problem_context] if self.problem_context else []
-
-    def deactivate(self) -> None:
-        self.active = False
-        self.step = 0
-
-    def system_prompt(self) -> str:
-        context_note = f"\nKullanıcının aktardığı sorun özeti: {self.problem_context}" if self.problem_context else ""
-        return (
-            "LASTİK ÖRDEK (SOKRATESÇİ HATA AYIKLAMA) MODU ETKİN:\n"
-            "- Kullanıcıya ASLA doğrudan hazır kod, düzeltilmiş yama veya kesin çözümü verme.\n"
-            "- Bunun yerine tek seferde 1-2 kısa, düşündürücü Sokratesçi mantık sorusu sor.\n"
-            "- Kullanıcının beklenen vs. gerçek çıktıyı, değişken değerlerini, sınır koşullarını ve "
-            "gizli varsayımlarını kendi kendine keşfetmesini sağla.\n"
-            "- Kısa, samimi ve sabırlı Türkçe kullan."
-            f"{context_note}"
-        )
-
-    def process_message(self, user_message: str) -> dict[str, Any]:
-        """Kullanıcı mesajını işler; tetiklendiyse veya aktifse sonraki Sokratesçi soruyu döner."""
-        msg = (user_message or "").strip()
-        if self.active and self.is_exit(msg):
-            self.deactivate()
-            return {
-                "active": False,
-                "triggered": False,
-                "closed": True,
-                "step": 0,
-                "question": "Harika! Kendi başına çözdün, ben sadece kulak kabarttım. Takılırsan yine buradayım.",
-                "system_prompt": "",
-            }
-
-        triggered = False
-        if not self.active and self.is_trigger(msg):
-            self.activate(msg)
-            triggered = True
-        elif self.active and msg:
-            self.history.append(msg)
-
-        if not self.active:
-            return {
-                "active": False,
-                "triggered": False,
-                "closed": False,
-                "step": 0,
-                "question": None,
-                "system_prompt": "",
-            }
-
-        idx = min(self.step, len(self.SOCRATIC_STEPS) - 1)
-        question = self.SOCRATIC_STEPS[idx]
-        self.step += 1
-        return {
-            "active": True,
-            "triggered": triggered,
-            "closed": False,
-            "step": self.step,
-            "question": question,
-            "system_prompt": self.system_prompt(),
-        }
-
-
-# ---------------------------------------------------------------------------
-# 5. Git & Terminal Tepkileri (GitTerminalWatcher)
-# ---------------------------------------------------------------------------
-class GitTerminalWatcher:
-    """Aktif dizindeki .git/logs/HEAD commit'lerini ve terminal hata çıktılarını izler."""
-
-    COMMIT_DANCE_EVENT = {
-        "event": "commit_dance",
-        "state": "dance",
-        "emote": "heart",
-        "message": "Yeni commit! Kodlar tertemiz, kutlama dansı!",
-    }
-    TEST_FAIL_EVENT = {
-        "event": "test_fail_hiss",
-        "state": "hiss",
-        "emote": "anger",
-        "message": "Fısss! Testler patlamış, bir bug kokusu alıyorum!",
-    }
-    _ERROR_PATTERNS = (
-        re.compile(r"\bFAIL\b"),
-        re.compile(r"\bFAILED\b"),
-        re.compile(r"\bError\b"),
-        re.compile(r"\bTraceback\b"),
-        re.compile(r"pytest failed", re.IGNORECASE),
-    )
-
-    def __init__(self, repo_path: str | Path | None = None) -> None:
-        self.repo_path = Path(repo_path) if repo_path is not None else None
-        self._last_commit_marker: str | None = None
-
-    @staticmethod
-    def _find_head_log(path: Path) -> Path | None:
-        try:
-            resolved = path.resolve()
-        except Exception:
-            resolved = path
-        for candidate in (resolved, *resolved.parents):
-            log_file = candidate / ".git" / "logs" / "HEAD"
-            if log_file.is_file():
-                return log_file
-        return None
-
-    @staticmethod
-    def _read_last_commit_marker(head_log: Path) -> str | None:
-        try:
-            text = head_log.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            return None
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines:
-            return None
-        last = lines[-1]
-        # Reflog satırı: <old_sha> <new_sha> <author> <timestamp> <tz>\t<message>
-        parts = last.split("\t", 1)
-        tokens = parts[0].split()
-        new_sha = tokens[1] if len(tokens) >= 2 else ""
-        ts = tokens[-2] if len(tokens) >= 4 else ""
-        return f"{new_sha}:{ts}:{last}"
-
-    def check_git(self, repo_path: str | Path | None = None) -> dict[str, Any] | None:
-        target = Path(repo_path) if repo_path is not None else self.repo_path
-        if target is None:
-            return None
-        head_log = self._find_head_log(target)
-        if head_log is None:
-            return None
-        marker = self._read_last_commit_marker(head_log)
-        if marker is None:
-            return None
-        if self._last_commit_marker is None:
-            self._last_commit_marker = marker
-            return None
-        if marker != self._last_commit_marker:
-            self._last_commit_marker = marker
-            return dict(self.COMMIT_DANCE_EVENT)
-        return None
-
-    @classmethod
-    def check_terminal(cls, title: str = "", output: str = "") -> dict[str, Any] | None:
-        combined = f"{title or ''}\n{output or ''}"
-        if any(pattern.search(combined) for pattern in cls._ERROR_PATTERNS):
-            return dict(cls.TEST_FAIL_EVENT)
-        return None
-
-    def poll(
-        self,
-        repo_path: str | Path | None = None,
-        terminal_title: str = "",
-        terminal_output: str = "",
-    ) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        git_event = self.check_git(repo_path=repo_path)
-        if git_event is not None:
-            events.append(git_event)
-        term_event = self.check_terminal(title=terminal_title, output=terminal_output)
-        if term_event is not None:
-            events.append(term_event)
-        return events
 
 
 # ---------------------------------------------------------------------------

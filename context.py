@@ -20,6 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 
 CATEGORY_LABELS = {
     "coding": "kod yazıyor", "browsing": "internette geziyor", "gaming": "oyun oynuyor",
@@ -29,13 +30,14 @@ CATEGORY_LABELS = {
 
 # process name (lowercase, uzantısız) -> kategori
 _PROCESS_CATEGORIES = {
-    "coding": {"code", "code - insiders", "cursor", "pycharm", "pycharm64", "idea", "idea64", "devenv", "antigravity",
+    "coding": {"code", "code - insiders", "visual studio code", "cursor", "pycharm", "pycharm64", "idea", "idea64", "devenv", "antigravity",
                "windowsterminal", "wt", "powershell", "pwsh", "cmd", "conhost", "mintty", "alacritty", "wezterm-gui",
+               "terminal", "iterm2", "iterm", "warp", "ghostty", "kitty", "xcode", "codex",
                "sublime_text", "notepad++", "atom", "rider", "rider64", "clion", "clion64", "webstorm", "webstorm64",
                "goland64", "datagrip64", "androidstudio", "studio64", "zed", "neovide", "nvim", "vim", "gvim", "emacs",
                "claude", "python", "pythonw", "jupyter-lab", "unity", "unityhub", "godot", "ue4editor", "unrealEditor".lower()},
-    "browsing": {"chrome", "msedge", "firefox", "opera", "opera_gx", "brave", "vivaldi", "launcher", "iexplore", "yandex",
-                 "arc", "zen"},
+    "browsing": {"chrome", "google chrome", "safari", "msedge", "microsoft edge", "firefox", "opera", "opera_gx",
+                 "brave", "brave browser", "vivaldi", "launcher", "iexplore", "yandex", "arc", "zen"},
     "gaming": {"valorant", "valorant-win64-shipping", "league of legends", "leagueclient", "leagueclientux",
                "league of legends", "rdr2", "hogwartslegacy", "minecraft", "tlauncher", "javaw", "minecraftlauncher",
                "cs2", "csgo", "dota2", "gta5", "gtav", "fortniteclient-win64-shipping", "eldenring", "witcher3",
@@ -47,20 +49,26 @@ _PROCESS_CATEGORIES = {
                "assassinscreed", "baldursgate3", "bg3", "bg3_dx11", "palworld", "lethalcompany", "phasmophobia",
                "deadbydaylight", "rust", "rustclient", "ark", "shootergame", "sotgame", "halo", "doometernal",
                "spiderman", "godofwar", "horizonzerodawn", "thelastofus", "tlou-i", "ghostoftsushima"},
-    "office": {"winword", "excel", "powerpnt", "onenote", "outlook", "acrord32", "acrobat", "libreoffice", "soffice",
-               "soffice.bin", "wps", "notion", "obsidian", "msaccess", "teams", "ms-teams"},
-    "chat": {"discord", "whatsapp", "telegram", "signal", "slack", "skype", "zoom", "messenger", "viber", "element"},
-    "media": {"spotify", "vlc", "obs64", "obs32", "mpc-hc64", "mpc-hc", "potplayermini64", "potplayer", "wmplayer",
-              "musicbee", "foobar2000", "aimp", "itunes", "groove", "music.ui", "video.ui", "netflix", "kodi",
+    "office": {"winword", "microsoft word", "excel", "microsoft excel", "powerpnt", "microsoft powerpoint",
+               "onenote", "outlook", "microsoft outlook", "acrord32", "acrobat", "libreoffice", "soffice",
+               "soffice.bin", "wps", "notion", "obsidian", "msaccess", "teams", "ms-teams", "microsoft teams",
+               "notes", "pages", "numbers", "keynote", "textedit", "preview", "mail", "calendar", "freeform"},
+    "chat": {"discord", "whatsapp", "telegram", "signal", "slack", "skype", "zoom", "zoom.us",
+             "messenger", "viber", "element", "messages", "facetime"},
+    "media": {"spotify", "vlc", "iina", "mpv", "obs64", "obs32", "obs", "mpc-hc64", "mpc-hc", "potplayermini64", "potplayer",
+              "wmplayer", "musicbee", "foobar2000", "aimp", "itunes", "music", "apple music", "youtube music", "tv", "apple tv",
+              "quicktime player", "quicktime", "groove", "music.ui", "video.ui", "netflix", "kodi",
               "premiere", "adobe premiere pro", "afterfx", "davinciresolve", "resolve", "audacity", "photoshop",
-              "illustrator", "figma", "blender", "capcut", "clipchamp", "lightroom"},
-    "files": {"explorer", "totalcmd", "totalcmd64", "7zfm", "winrar", "everything", "onedrive"},
+              "illustrator", "figma", "blender", "capcut", "clipchamp", "lightroom", "garageband", "final cut pro"},
+    "files": {"explorer", "finder", "totalcmd", "totalcmd64", "7zfm", "winrar", "everything", "onedrive"},
 }
 _PROCESS_TO_CATEGORY = {p: c for c, names in _PROCESS_CATEGORIES.items() for p in names}
 
 # pencere başlığında geçen ipuçları (küçük harf) -> (alt ipucu, kategori geçersiz kılma)
 _TITLE_HINTS = [
-    ("youtube", "YouTube", "browsing"), ("netflix", "Netflix", "media"), ("twitch", "Twitch", "browsing"),
+    ("youtube music", "YouTube Music", "media"), ("youtube", "YouTube", "browsing"),
+    ("netflix", "Netflix", "media"), ("prime video", "Prime Video", "media"),
+    ("disney+", "Disney+", "media"), ("apple tv", "Apple TV", "media"), ("twitch", "Twitch", "browsing"),
     ("github", "GitHub", "coding"), ("gitlab", "GitLab", "coding"), ("stack overflow", "StackOverflow", "coding"),
     ("stackoverflow", "StackOverflow", "coding"), ("chatgpt", "ChatGPT", "browsing"), ("claude", "Claude", "browsing"),
     ("gemini", "Gemini", "browsing"), ("instagram", "Instagram", "browsing"), ("twitter", "Twitter/X", "browsing"),
@@ -120,9 +128,20 @@ def categorize(process_name: str, title: str = "") -> tuple[str, str | None]:
 
 
 def get_foreground_info() -> dict:
-    """{'title', 'process_name', 'process_path', 'pid', 'category', 'hint'} — Windows dışında boş."""
+    """{'title', 'process_name', 'process_path', 'pid', 'category', 'hint'} — Windows & macOS."""
     info = {"title": "", "process_name": "", "process_path": "", "pid": 0, "category": "idle", "hint": None}
     if not IS_WINDOWS:
+        if IS_MAC:
+            try:
+                import window_utils
+                win = window_utils.mac_foreground_window_info()
+                if win:
+                    info["process_name"] = win.get("owner") or ""
+                    info["title"] = win.get("title") or ""
+                    info["pid"] = int(win.get("pid") or 0)
+                    info["category"], info["hint"] = categorize(info["process_name"], info["title"])
+            except Exception:
+                pass
         return info
     try:
         from ctypes import wintypes
@@ -156,8 +175,18 @@ def get_foreground_info() -> dict:
 
 
 def idle_seconds() -> float:
-    """Son klavye/fare girdisinden bu yana geçen saniye (GetLastInputInfo)."""
+    """Son klavye/fare girdisinden bu yana geçen saniye (Windows GetLastInputInfo / macOS CoreGraphics)."""
     if not IS_WINDOWS:
+        if IS_MAC:
+            try:
+                import ctypes.util
+                cg = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreGraphics"))
+                cg.CGEventSourceSecondsSinceLastEventType.argtypes = [ctypes.c_int32, ctypes.c_uint32]
+                cg.CGEventSourceSecondsSinceLastEventType.restype = ctypes.c_double
+                val = cg.CGEventSourceSecondsSinceLastEventType(0, 0xFFFFFFFF)
+                return max(0.0, float(val))
+            except Exception:
+                return 0.0
         return 0.0
     try:
         class LASTINPUTINFO(ctypes.Structure):
@@ -173,8 +202,44 @@ def idle_seconds() -> float:
 
 
 def _is_fullscreen(hwnd=None) -> bool:
-    """Ön plan penceresi ekranı tamamen kaplıyor mu (oyun tam ekran sezgisi)."""
+    """Ön plan penceresi ekranı tamamen kaplıyor mu (oyun/video tam ekran sezgisi)."""
     if not IS_WINDOWS:
+        if IS_MAC:
+            try:
+                import window_utils
+                rect = window_utils.window_rect(hwnd) if hwnd else window_utils.active_window_rect()
+                if not rect:
+                    return False
+                o = window_utils._objc_runtime()
+                screens = o.items(o.send(o.cls("NSScreen"), o.sel("screens")))
+                if not screens:
+                    return False
+                primary_h = o.send_rect(screens[0], o.sel("frame")).size.height
+                l, t, r, b = rect
+                for scr in screens:
+                    f = o.send_rect(scr, o.sel("frame"))
+                    vis = o.send_rect(scr, o.sel("visibleFrame"))
+                    sl = round(f.origin.x)
+                    st = round(primary_h - (f.origin.y + f.size.height))
+                    sr = round(sl + f.size.width)
+                    sb = round(st + f.size.height)
+                    vis_top = round(primary_h - (vis.origin.y + vis.size.height))
+                    vis_bottom = round(primary_h - vis.origin.y)
+                    full_width = l <= sl + 2 and r >= sr - 2
+                    covers_full = full_width and t <= st + 2 and b >= sb - 2
+                    # Çentikli MacBook'ta native tam ekran penceresi çentiğin hemen altında (vis_top) başlar
+                    # ve Dock alanını (sb) tamamen kaplar.
+                    covers_below_notch = (
+                        full_width
+                        and b >= sb - 2
+                        and vis_top > st
+                        and t <= vis_top + 2
+                        and (sb - vis_bottom >= 8)
+                    )
+                    if covers_full or covers_below_notch:
+                        return True
+            except Exception:
+                pass
         return False
     try:
         from ctypes import wintypes

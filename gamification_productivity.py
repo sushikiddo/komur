@@ -100,7 +100,7 @@ UNLOCK_TABLE = {
     },
 }
 
-BOSS_KEY_HOTKEY = "Ctrl+Shift+K"
+BOSS_KEY_HOTKEY = "Ctrl+Shift+H"
 
 HEALTH_WORK_THRESHOLD_SECONDS = 3600
 HEALTH_POINTER_OFFSET_X = -60
@@ -180,54 +180,6 @@ def _read_image_dimensions(path: Path) -> tuple[int, int] | None:
     return None
 
 
-def _extract_ai_text(response: Any) -> str | None:
-    if response is None:
-        return None
-    if isinstance(response, str):
-        return response.strip() or None
-    reply = getattr(response, "reply", None)
-    if isinstance(reply, str):
-        return reply.strip() or None
-    if isinstance(response, dict):
-        for key in ("summary", "reply", "message", "text"):
-            val = response.get(key)
-            if isinstance(val, str) and val.strip():
-                return val.strip()
-    return str(response).strip() or None
-
-
-def _call_ai_vision(ai_client: Any, path: Path, prompt: str) -> str | None:
-    if ai_client is None:
-        return None
-    for method_name in ("analyze_image", "vision", "describe_image"):
-        fn = getattr(ai_client, method_name, None)
-        if callable(fn):
-            try:
-                return _extract_ai_text(fn(str(path), prompt))
-            except TypeError:
-                try:
-                    return _extract_ai_text(fn(str(path)))
-                except Exception:
-                    log.debug("AI vision call failed on %s", method_name, exc_info=True)
-            except Exception:
-                log.debug("AI vision call failed on %s", method_name, exc_info=True)
-    return None
-
-
-def _call_ai_summary(ai_client: Any, text: str, prompt: str) -> str | None:
-    if ai_client is None:
-        return None
-    for method_name in ("summarize", "analyze_text", "respond", "ask"):
-        fn = getattr(ai_client, method_name, None)
-        if callable(fn):
-            try:
-                arg = text if method_name in ("summarize", "analyze_text") else prompt
-                return _extract_ai_text(fn(arg))
-            except Exception:
-                log.debug("AI summary call failed on %s", method_name, exc_info=True)
-    return None
-
-
 def _inspect_code_or_log(text: str) -> dict[str, Any]:
     lines = text.splitlines() if text else []
     error_lines = [line.strip() for line in lines if ERROR_LINE_RE.search(line)]
@@ -263,18 +215,11 @@ def _derive_link_title(url: str, raw_text: str) -> str:
 class CatBasketDropTarget:
     """Kedi sepetine bırakılan dosya, kod/log metni veya URL'yi işler."""
 
-    def __init__(self, ai_client: Any = None, memory_store: Any = None):
-        self.ai_client = ai_client
+    def __init__(self, memory_store: Any = None):
         self.memory_store = memory_store
         self.history: list[dict[str, Any]] = []
 
-    def handle_drop(
-        self,
-        payload: str,
-        ai_client: Any = None,
-        memory_store: Any = None,
-    ) -> dict[str, Any]:
-        client = ai_client if ai_client is not None else self.ai_client
+    def handle_drop(self, payload: str, memory_store: Any = None) -> dict[str, Any]:
         memory = memory_store if memory_store is not None else self.memory_store
         raw = _normalize_payload(payload)
 
@@ -296,17 +241,17 @@ class CatBasketDropTarget:
             candidate = Path(raw)
             ext = candidate.suffix.lower()
             if ext in IMAGE_EXTENSIONS:
-                result = self._handle_image(candidate, ext, client)
+                result = self._handle_image(candidate, ext)
                 self.history.append(result)
                 return result
             if ext in CODE_LOG_EXTENSIONS:
-                result = self._handle_code_file(candidate, ext, client)
+                result = self._handle_code_file(candidate, ext)
                 self.history.append(result)
                 return result
 
         # 3) Çok satırlı kod/hata metni veya kod/hata anahtar kelimesi
         if "\n" in raw or CODE_OR_ERROR_RE.search(raw):
-            result = self._handle_code_text(raw, client, filename=None, path=None)
+            result = self._handle_code_text(raw, filename=None, path=None)
             self.history.append(result)
             return result
 
@@ -323,23 +268,18 @@ class CatBasketDropTarget:
     def handle_drop_many(
         self,
         payloads: list[str] | tuple[str, ...],
-        ai_client: Any = None,
         memory_store: Any = None,
     ) -> list[dict[str, Any]]:
-        return [self.handle_drop(item, ai_client=ai_client, memory_store=memory_store) for item in payloads]
+        return [self.handle_drop(item, memory_store=memory_store) for item in payloads]
 
-    def _handle_image(self, path: Path, ext: str, ai_client: Any) -> dict[str, Any]:
+    def _handle_image(self, path: Path, ext: str) -> dict[str, Any]:
         exists = path.is_file()
         size_bytes = path.stat().st_size if exists else None
         dimensions = _read_image_dimensions(path) if exists else None
 
         dim_text = f"{dimensions[0]}x{dimensions[1]}" if dimensions else "boyut okunamadı"
         size_text = f"{size_bytes} bayt" if size_bytes is not None else "dosya diskte bulunamadı"
-        local_summary = f"Görsel incelendi: {path.name} ({dim_text}, {size_text})."
-
-        prompt = f"Bu görseli kısaca özetle: {path.name} ({dim_text}, {size_text})"
-        ai_summary = _call_ai_vision(ai_client, path, prompt)
-        summary = ai_summary or local_summary
+        summary = f"Görsel incelendi: {path.name} ({dim_text}, {size_text})."
 
         return {
             "ok": True,
@@ -351,12 +291,11 @@ class CatBasketDropTarget:
             "exists": exists,
             "size_bytes": size_bytes,
             "dimensions": dimensions,
-            "ai_summary": ai_summary,
             "summary": summary,
             "message": summary,
         }
 
-    def _handle_code_file(self, path: Path, ext: str, ai_client: Any) -> dict[str, Any]:
+    def _handle_code_file(self, path: Path, ext: str) -> dict[str, Any]:
         exists = path.is_file()
         if exists:
             try:
@@ -365,7 +304,7 @@ class CatBasketDropTarget:
                 content = ""
         else:
             content = ""
-        result = self._handle_code_text(content, ai_client, filename=path.name, path=str(path))
+        result = self._handle_code_text(content, filename=path.name, path=str(path))
         result["extension"] = ext
         result["exists"] = exists
         return result
@@ -373,25 +312,17 @@ class CatBasketDropTarget:
     def _handle_code_text(
         self,
         text: str,
-        ai_client: Any,
         *,
         filename: str | None,
         path: str | None,
     ) -> dict[str, Any]:
         stats = _inspect_code_or_log(text)
         label = filename or "metin"
-        local_summary = (
+        summary = (
             f"{label}: {stats['line_count']} satır, "
             f"{stats['error_count']} hata, {stats['exception_count']} istisna, "
             f"{stats['def_count']} fonksiyon, {stats['class_count']} sınıf tespit edildi."
         )
-        snippet = text[:4000]
-        ai_summary = _call_ai_summary(
-            ai_client,
-            snippet,
-            f"Aşağıdaki kod/log içeriğini kısaca özetle ({local_summary}):\n{snippet}",
-        )
-        summary = ai_summary or local_summary
         return {
             "ok": True,
             "action": "summarize_code_or_log",
@@ -409,7 +340,6 @@ class CatBasketDropTarget:
                 "defs": stats["defs"],
                 "classes": stats["classes"],
             },
-            "ai_summary": ai_summary,
             "summary": summary,
             "message": summary,
         }
@@ -791,7 +721,7 @@ class TodoFishPond:
 # 4. Patron Tuşu (BossKeyController)
 # ---------------------------------------------------------------------------
 class BossKeyController:
-    """Ctrl+Shift+K ile tüm görselleri/panelleri gizler, sesleri susturur ve geri yükler."""
+    """Ctrl+Shift+H ile tüm görselleri/panelleri gizler, sesleri susturur ve geri yükler."""
 
     HOTKEY = BOSS_KEY_HOTKEY
 

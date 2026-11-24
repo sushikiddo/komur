@@ -15,6 +15,7 @@ import json
 import logging
 import logging.handlers
 from logging.handlers import RotatingFileHandler
+import math
 import os
 from pathlib import Path
 import sys
@@ -27,6 +28,11 @@ import tkinter as tk
 import tkinter.simpledialog as simpledialog
 import tkinter.messagebox as messagebox
 from tkinter import ttk, messagebox
+
+# Tüm modüller veri kökü olarak %LOCALAPPDATA%'yı okur (bazıları içe aktarılırken);
+# macOS'ta bunu proje modülleri yüklenmeden önce ~/Library/Application Support yap.
+if sys.platform == "darwin":
+    os.environ.setdefault("LOCALAPPDATA", str(Path.home() / "Library" / "Application Support"))
 
 from behavior import Bounds
 from needs import HungryCatBrain
@@ -45,7 +51,7 @@ from activity_reactions import ActivityReactions
 from companion import Companion, step_companions
 from panel import TITLE, show_panel as _show_panel
 import window_utils
-from window_utils import (BG, HEIGHT, IS_WINDOWS, WIDTH, enable_dpi_awareness, make_transparent, monitor_bounds,
+from window_utils import (BG, HEIGHT, IS_MAC, IS_WINDOWS, WIDTH, enable_dpi_awareness, make_transparent, monitor_bounds,
                           movement_bounds, place_window, pointer_position)
 
 import subprocess
@@ -58,6 +64,9 @@ STATE_LABELS = {
     "groom": "Temizleniyor", "stretch": "Geriniyor", "sleep": "Uyuyor",
     "yawn": "Esniyor", "play": "Top oynuyor", "follow": "Seni takip ediyor",
     "bored": "Canı sıkılıyor", "roll": "Yerde yuvarlanıyor",
+    "drink": "Süt içiyor", "eat": "Mama yiyor", "scratch": "Tırmalıyor",
+    "jump": "Zıplıyor", "box_sit": "Kutuda oturuyor", "perch": "Pencerede tünüyor",
+    "laser_chase": "Lazer kovalıyor",
 }
 
 # 100+ konuşma baloncuğu mesajı — gezirken, boşken, PC aktivite yorumları
@@ -124,7 +133,8 @@ class PanelShortcut:
     """Own the hotkey on a worker thread so Tk cannot consume WM_HOTKEY."""
 
     def __init__(self):
-        self.requested = threading.Event()
+        self.requested = threading.Event()        # Ctrl+Shift+K -> panel
+        self.boss_requested = threading.Event()   # Ctrl+Shift+H -> patron tuşu
         self.stopped = threading.Event()
         self.ready = threading.Event()
         self.registered = False
@@ -136,6 +146,7 @@ class PanelShortcut:
         user32 = ctypes.windll.user32
         # id 19267, MOD_CONTROL|MOD_SHIFT|MOD_NOREPEAT (16390), 'K'
         self.registered = bool(user32.RegisterHotKey(None, 19267, 16390, ord("K")))
+        boss = bool(user32.RegisterHotKey(None, 19268, 16390, ord("H")))
         self.ready.set()
         try:
             msg = wintypes.MSG()
@@ -143,17 +154,25 @@ class PanelShortcut:
                 while user32.PeekMessageW(ctypes.byref(msg), None, 786, 786, 1):
                     if msg.wParam == 19267:
                         self.requested.set()
+                    elif msg.wParam == 19268:
+                        self.boss_requested.set()
         finally:
             if self.registered:
                 user32.UnregisterHotKey(None, 19267)
+            if boss:
+                user32.UnregisterHotKey(None, 19268)
 
     def close(self):
         self.stopped.set()
         self.thread.join(timeout=0.5)
 
 
+def log_path():
+    return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Komur" / "komur.log"
+
+
 def setup_logging():
-    directory = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Komur"
+    directory = log_path().parent
     try:
         directory.mkdir(parents=True, exist_ok=True)
         handler = RotatingFileHandler(
@@ -204,21 +223,30 @@ class DesktopCat:
             CatRenderer(self.canvas, self.w, self.h), self.settings.get("skin")
         )
 
-        # Effect manager + particle system for realistic ses ve efenkler
+        # Effect manager + particle system for realistic görsel efektler
+        # Sesler kesin 3-olay listesiyle (sevme, esneme, uyanma) DesktopCat üzerinden çalınır.
         self.effect_orchestrator = EffectOrchestrator(
             self.canvas, self.w, self.h,
             sound_enabled=self.settings.get("sound"),
         )
+        self.effect_orchestrator._play_sound = lambda *_args, **_kw: None
         self.renderer.set_effect_orchestrator(self.effect_orchestrator)
         self._effect_state = self.brain.state
+        self._prev_sound_state = self.brain.state
 
         self.last_time = time.monotonic()
         self.animation_time = 0.0
-        self.message = f"Merhaba! Ben {self.settings.get('name')}. Sağ tıkla veya çift tıkla."
+        hint = "İki parmak tık: menü · sol tık: sev." if IS_MAC else "Sağ tık: menü · orta tık: sohbet."
+        self.message = f"Merhaba! Ben {self.settings.get('name')}. {hint}"
         self.message_until = self.last_time + 7
         self.drag_origin = None
         self.dragged = False
         self.menu_open = False
+        self._last_menu_toggle = -10.0
+        self._pressed_while_active = True
+        self._pressed_hud_was_open = False
+        self._last_mac_chrome = self.last_time
+        self._next_auto_perch_at = self.last_time + random.uniform(75.0, 120.0)
         self.closed = False
         self.hidden = False
         self.muted = False
@@ -261,8 +289,16 @@ class DesktopCat:
         self.canvas.bind("<ButtonPress-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
-        self.canvas.bind("<Double-Button-1>", lambda event: self._on_speak_click())
-        self.root.bind("<Button-3>", self._show_menu)
+        # Tk 8.6 ve öncesinde macOS (aqua) sağ tıkı <Button-2> olarak verir; Tk 8.7/9'dan itibaren
+        # her platformda sağ tık <Button-3>, orta tık <Button-2>'dir.
+        legacy_aqua = IS_MAC and tk.TkVersion < 8.7
+        menu_button, chat_button = ("<Button-2>", "<Button-3>") if legacy_aqua else ("<Button-3>", "<Button-2>")
+        self.canvas.bind(chat_button, lambda event: self.open_chat())
+        self.canvas.bind(menu_button, self._show_menu)
+        self.root.bind(menu_button, self._show_menu)
+        if IS_MAC:
+            self.canvas.bind("<Control-Button-1>", lambda event: (self._show_menu(event), "break")[1])
+            window_utils.register_mac_right_click(self.root, self._show_menu_at)
         self.root.bind("<Escape>", lambda event: self.command("wander"))
         self.root.bind("<F1>", lambda event: self.show_panel())
         self.root.bind("<Key>", self._on_key_press)
@@ -274,9 +310,12 @@ class DesktopCat:
         self.root.deiconify()
         self.root.update_idletasks()
         self._apply_position()
+        window_utils.ensure_floating(self.root)
         self._apply_opacity()
 
         self.tray = Tray(tooltip=f"{self.settings.get('name')} — Kömür")
+        if hasattr(self.tray, "attach_tk"):
+            self.tray.attach_tk(self.root, on_toggle_hide=self.toggle_boss_key)
         self._register_hotkey()
         self._rebuild_companions()
         self.bubble = SpeechBubble(self.root)
@@ -293,6 +332,8 @@ class DesktopCat:
         self.brain.vx = 0.0
         self.brain.vy = 0.0
         self.brain.pointer_xy = None
+        self.brain.hide_internal_ball = False
+        self._laser_dot = None
         self.effect_orchestrator.cat_screen_x = self.brain.x + self.w / 2
         self.effect_orchestrator.screen_w = max(1.0, area.right - area.left)
         self._init_speech()
@@ -305,9 +346,20 @@ class DesktopCat:
         self.acoustic = None
         self.hardware_mind = None
         self.dream_engine = None
-        self.git_watcher = None
+        self.toybox = None
+        self.weather = None
+        try:
+            from weather import WeatherWatcher
+            self.weather = WeatherWatcher()
+            self.weather.set_city(self.settings.get("weather_city", ""))
+        except Exception:
+            logging.debug("WeatherWatcher init failed", exc_info=True)
+        try:
+            from desktop_toys import ToyBox
+            self.toybox = ToyBox(self.root)
+        except Exception:
+            logging.debug("ToyBox init failed", exc_info=True)
         self.meow_translator = None
-        self.rubber_duck = None
         self.affection = None
         self.fish_pond = None
         self.basket = None
@@ -316,7 +368,6 @@ class DesktopCat:
 
         bounds = (area.left, area.top, area.right, area.bottom)
         mem = getattr(self.assistant, "memory", None)
-        ai_client = getattr(self.assistant, "ai", None)
 
         try:
             from desktop_physics import DesktopPhysics
@@ -329,15 +380,11 @@ class DesktopCat:
                 DynamicPurrController,
                 KeyboardReactiveAudio,
                 LofiAmbiencePlayer,
-                MicNoiseMonitor,
-                NaturalTurkishTTS,
             )
             self.acoustic = types.SimpleNamespace(
                 purr=DynamicPurrController(),
                 keyboard=KeyboardReactiveAudio(),
                 lofi=LofiAmbiencePlayer(),
-                tts=NaturalTurkishTTS(speech_rate=self.settings.get("speech_rate", 0)),
-                mic=MicNoiseMonitor(),
             )
         except Exception:
             logging.debug("AcousticEngine init failed", exc_info=True)
@@ -345,17 +392,11 @@ class DesktopCat:
         try:
             from persona_dreams import (
                 DreamEngine,
-                GitTerminalWatcher,
                 HardwareMind,
                 MeowTranslator,
-                RubberDuckDebugger,
             )
             self.hardware_mind = HardwareMind()
-            self.git_watcher = GitTerminalWatcher(repo_path=Path.cwd())
             self.meow_translator = MeowTranslator()
-            self.rubber_duck = RubberDuckDebugger()
-            if self.settings.get("rubber_duck_mode", False):
-                self.rubber_duck.activate()
             if mem is None:
                 from memory_store import MemoryStore
                 mem = MemoryStore()
@@ -374,7 +415,7 @@ class DesktopCat:
             )
             self.affection = AffectionSystem(settings=self.settings, memory_store=mem)
             self.fish_pond = TodoFishPond(affection=self.affection, bounds=bounds)
-            self.basket = CatBasketDropTarget(ai_client=ai_client, memory_store=mem)
+            self.basket = CatBasketDropTarget(memory_store=mem)
             self.boss_key = BossKeyController()
             self.health_guard = HealthWaterGuard()
             enable_file_drop(self.root, self._on_file_drop)
@@ -408,11 +449,13 @@ class DesktopCat:
         self.menu.add_separator()
         v2_menu = tk.Menu(self.menu, tearoff=False, font=("Segoe UI", 10))
         v2_menu.add_command(label="Karton kutu bırak", command=self.toggle_box_prop)
-        v2_menu.add_command(label="Lazer aç/kapat", command=self.toggle_laser)
+        for kind, label in (("yarn", "İplik yumağı at/kaldır"), ("bowl", "Süt kasesi koy/kaldır"),
+                            ("post", "Tırmalama tahtası koy/kaldır")):
+            v2_menu.add_command(label=label, command=lambda k=kind: self.toggle_toy(k))
         v2_menu.add_command(label="Pencere tepesine tüne", command=self.perch_active_window)
         v2_menu.add_command(label="Görev çubuğuna in", command=self.walk_on_taskbar_cmd)
         v2_menu.add_command(label="Retro Pixel modu", command=self.toggle_retro_mode)
-        v2_menu.add_command(label="Lastik Ördek modu", command=self.toggle_rubber_duck)
+        v2_menu.add_command(label="Hava durumu (şehir)…", command=self.choose_weather_city)
         v2_menu.add_command(label="Lofi Ambiyans aç/kapat", command=self.toggle_lofi_ambience)
         v2_menu.add_command(label="Patron Tuşu (Gizle)", command=self.toggle_boss_key)
         self.menu.add_cascade(label="v2.0 Özellikler", menu=v2_menu)
@@ -421,7 +464,7 @@ class DesktopCat:
         self.menu.add_command(label="Duraklat / Devam et", command=self.toggle_pause)
         self.menu.add_command(label="Diğer ekrana geç", command=self.next_monitor)
         self.menu.add_command(label="Kömür ile konuş", command=self._on_speak_click)
-        self.menu.add_command(label="Sohbet geçmişi ve ayarlar", command=self.assistant_history)
+        self.menu.add_command(label="Komut geçmişi ve ayarlar", command=self.assistant_history)
         self.menu.add_command(label="Kontrol paneli", command=self.show_panel)
         self.menu.add_separator()
         self.menu.add_command(label="Kapat", command=self.close)
@@ -440,12 +483,16 @@ class DesktopCat:
             kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
             if kernel.WaitForSingleObject(self.activation_event, 0) == 0:
                 self.show_panel()
-        if self.shortcut is not None and self.shortcut.requested.is_set():
+        if self.shortcut is None:
+            return
+        if self.shortcut.requested.is_set():
             self.shortcut.requested.clear()
-            if self.settings.get("boss_key_mode", False) and getattr(self, "boss_key", None) is not None:
+            self.show_panel()
+        boss = getattr(self.shortcut, "boss_requested", None)
+        if boss is not None and boss.is_set():
+            boss.clear()
+            if self.settings.get("boss_key_mode", False):
                 self.toggle_boss_key()
-            else:
-                self.show_panel()
 
     def toggle_boss_key(self):
         if getattr(self, "boss_key", None) is None:
@@ -453,24 +500,168 @@ class DesktopCat:
         return self.boss_key.toggle(self)
 
     def toggle_box_prop(self):
-        if getattr(self, "physics", None) is None:
+        """HUD/menü adı korunur: karton kutu artık masaüstü oyuncağıdır."""
+        return self.toggle_toy("box")
+
+    def toggle_toy(self, kind):
+        """Masaüstü oyuncağını kedinin yanına koy ya da kaldır."""
+        if getattr(self, "toybox", None) is None:
             return None
-        if any(p.kind == "box" for p in self.physics.props):
-            self.physics.clear_props("box")
-            self.say("Karton kutu kaldırıldı.", 3)
-            return False
-        self.physics.spawn_prop("box", self.brain.x, self.brain.y)
-        self.say("Karton kutu bırakıldı! 📦", 4)
-        return True
+        from desktop_toys import LABELS, SIZES
+        area = self.areas[self.area_index]
+        tw, _ = SIZES[kind]
+        cx = self.brain.x + self.w / 2
+        side = 140 if self.brain.facing >= 0 else -140
+        tx = cx + side
+        if tx + tw / 2 > area.right - 10 or tx - tw / 2 < area.left + 10:
+            tx = cx - side
+        tx = max(area.left + tw / 2 + 10, min(area.right - tw / 2 - 10, tx))
+        placed = self.toybox.toggle(kind, tx, self.brain.y + self.h * 0.93)
+        if self.brain.state == "sleep" and (placed or kind == "box"):
+            self.brain.command("wake")   # yeni oyuncak ya da kutusu kalkan kedi uyanır
+        if kind == "box" and not placed and self.brain.state == "box_sit":
+            self.brain.rest()
+        self.say(f"{LABELS[kind]} {'hazır!' if placed else 'kaldırıldı.'}", 3)
+        return placed
+
+    def _step_toys(self, dt, now):
+        box = getattr(self, "toybox", None)
+        if box is None:
+            return
+        box.set_visible(not self.hidden)
+        if not box.toys or self.hidden:
+            return
+        if self._frames % 30 == 0 or not hasattr(self, "_toy_platforms"):
+            rect = window_utils.active_window_rect(ignore_hwnds=self._own_hwnds())
+            # küçük pencereler raf sayılmaz
+            self._toy_platforms = [(rect[0], rect[1], rect[2])] if rect and rect[2] - rect[0] >= 160 else []
+        area = self.areas[self.area_index]
+        perched = bool(getattr(getattr(self, "physics", None), "perched", False))
+        # oyuncaklar kedinin yürüdüğü zemine (yuva hizasındaki ayak çizgisi) oturur
+        if not perched:
+            self._toy_ground = min(area.bottom, self.brain.home_y + self.h * 0.93)
+        elif not hasattr(self, "_toy_ground"):
+            self._toy_ground = area.bottom
+        brain = self.brain
+        if box.box_until and brain.state != "box_sit":
+            box.exit_box()
+        idle = (not brain.paused and not perched and not getattr(brain, "_goal", False)
+                and brain.state in ("sit", "look", "groom", "wander", "bored", "yawn"))
+        event = box.step(
+            dt, now, (area.left, area.top, area.right, self._toy_ground), self._toy_platforms,
+            (brain.x + self.w / 2, brain.y + self.h * 0.85),
+            idle,
+            float(getattr(brain, "hunger", 0.0)),
+        )
+        if not event:
+            if brain.state == "box_sit" and not box.box_until:
+                brain.rest()
+            return
+        action = event["action"]
+        if perched and action in ("go", "drink", "scratch", "box"):
+            if action == "box":
+                box.exit_box()
+            return
+        anchors = box.anchors()
+        cat_cx = brain.x + self.w / 2
+        if action == "go":
+            tx, bottom = event["target"]
+            if event.get("kind") in ("bowl", "post"):
+                # oyuncağın yanına dur: başı (ön tarafı) kasenin/tahtanın üstüne gelsin
+                side = 1.0 if tx >= cat_cx else -1.0
+                tx -= side * min(self.w * 0.25, 55.0)
+            brain.go_to(tx - self.w / 2, bottom - self.h * 0.93)
+        elif action == "bat":
+            if "yarn" in anchors:
+                tx, _ = anchors["yarn"]
+                brain.facing = 1 if tx >= cat_cx else -1
+            brain._change("play", duration=1.1)
+            brain.hide_internal_ball = True
+        elif action == "drink":
+            if "bowl" in anchors:
+                tx, tb = anchors["bowl"]
+                brain.facing = 1 if tx >= cat_cx else -1
+                target_x = tx - self.w * (0.78 if brain.facing > 0 else 0.22)
+                brain.x = max(brain.bounds.left, min(brain.bounds.right, target_x))
+                brain.y = max(brain.bounds.top, min(brain.bounds.bottom, tb - self.h * 0.93))
+            if hasattr(brain, "hunger"):
+                brain.hunger = max(0.0, brain.hunger - 35.0)
+            brain.happiness = min(100.0, brain.happiness + 8.0)
+            brain._change("drink", duration=6.0)
+            self.say("Süt! Lık lık lık… 🥛", 5)
+        elif action == "scratch":
+            if "post" in anchors:
+                tx, tb = anchors["post"]
+                brain.facing = 1 if tx >= cat_cx else -1
+                target_x = tx - self.w * (0.76 if brain.facing > 0 else 0.24)
+                brain.x = max(brain.bounds.left, min(brain.bounds.right, target_x))
+                brain.y = max(brain.bounds.top, min(brain.bounds.bottom, tb - self.h * 0.93))
+            brain._change("scratch", duration=5.5)
+            self.say("Tırmalama zamanı! 🐾", 4)
+            if getattr(self, "affection", None) is not None:
+                try:
+                    self.affection.record_action("play")
+                except Exception:
+                    logging.debug("Affection action failed", exc_info=True)
+        elif action == "box":
+            stay = float(event.get("stay", 25.0))
+            if "box" in anchors:
+                tx, tb = anchors["box"]
+                brain.x = max(brain.bounds.left, min(brain.bounds.right, tx - self.w / 2))
+                brain.y = max(brain.bounds.top, min(brain.bounds.bottom, tb - self.h * 0.93))
+                brain.home_x, brain.home_y = brain.x, brain.y
+            brain._change("box_sit", duration=stay)
+            self.say("Kutu benim! 📦", 4)
+
+    def _ensure_laser_dot(self):
+        if getattr(self, "_laser_dot", None) is not None:
+            return self._laser_dot
+        try:
+            from desktop_toys import _LaserDotWindow
+            self._laser_dot = _LaserDotWindow(self.root)
+        except Exception:
+            logging.debug("LaserDotWindow init failed", exc_info=True)
+            self._laser_dot = None
+        return self._laser_dot
+
+    def _hide_laser_dot(self, destroy=False):
+        dot = getattr(self, "_laser_dot", None)
+        if dot is None:
+            return
+        try:
+            if destroy:
+                dot.destroy()
+                self._laser_dot = None
+            else:
+                dot.hide()
+        except Exception:
+            pass
 
     def toggle_laser(self):
         if getattr(self, "physics", None) is None:
             return None
         if self.physics.chasing_laser:
             self.physics.clear_props("laser")
+            self._hide_laser_dot(destroy=False)
+            self.brain.hide_internal_ball = False
+            self.brain.rest()
             self.say("Lazer kapatıldı.", 3)
             return False
-        self.physics.spawn_prop("laser", self.brain.x + 40, self.brain.y + 40)
+        if getattr(self, "toybox", None) is not None and self.toybox.box_until:
+            self.toybox.exit_box()
+        ptr = None
+        try:
+            ptr = pointer_position(self.root)
+        except Exception:
+            ptr = None
+        lx = ptr[0] if ptr else self.brain.x + 40
+        ly = ptr[1] if ptr else self.brain.y + 40
+        self.physics.spawn_prop("laser", lx, ly)
+        self.brain.hide_internal_ball = False
+        self.brain._change("laser_chase", duration=float("inf"))
+        dot = self._ensure_laser_dot()
+        if dot is not None and not self.hidden:
+            dot.show(lx, ly)
         self.say("Lazer yakalama zamanı! 🔴", 4)
         return True
 
@@ -485,6 +676,16 @@ class DesktopCat:
         if assistant is not None:
             candidates.append(getattr(assistant, "window", None))
             candidates.append(getattr(assistant, "compact_window", None))
+        hud = getattr(self, "context_hud", None)
+        if hud is not None:
+            candidates.append(getattr(hud, "window", None))
+        toybox = getattr(self, "toybox", None)
+        if toybox is not None:
+            for toy in getattr(toybox, "toys", {}).values():
+                candidates.append(getattr(toy, "win", None))
+        laser_dot = getattr(self, "_laser_dot", None)
+        if laser_dot is not None:
+            candidates.append(getattr(laser_dot, "win", None))
         for mate in getattr(self, "companions", ()) or ():
             candidates.append(getattr(mate, "root", None) or getattr(mate, "window", None))
         for win in candidates:
@@ -502,26 +703,64 @@ class DesktopCat:
                 continue
         return hwnds
 
-    def perch_active_window(self):
+    def _stop_laser(self):
+        if getattr(self, "physics", None) is not None and self.physics.chasing_laser:
+            self.physics.clear_props("laser")
+        self._hide_laser_dot(destroy=False)
+        self.brain.hide_internal_ball = False
+
+    def _stop_perch(self):
+        physics = getattr(self, "physics", None)
+        if physics is not None:
+            physics.perched = False
+            physics.perch_rect = None
+            physics.perch_hwnd = None
+            physics._jump = None
+            if physics.surface == "window_top":
+                physics.surface = "ground"
+        self._was_perched = False
+
+    def perch_active_window(self, quiet=False):
         """Jump onto the top edge of the active foreground window."""
         if getattr(self, "physics", None) is None:
             return False
-        rect = window_utils.active_window_rect(ignore_hwnds=self._own_hwnds())
+        self._stop_laser()
+        area = self.areas[self.area_index]
+        self.physics.bounds = (area.left, area.top, area.right, area.bottom)
+        hwnd = window_utils.foreground_hwnd(ignore_hwnds=self._own_hwnds())
+        rect = window_utils.window_rect(hwnd) if hwnd else None
         if rect is None:
-            self.say("Tünenecek aktif pencere bulunamadı.", 3)
+            if not quiet:
+                self.say("Tünenecek aktif pencere bulunamadı.", 3)
             return False
-        ok = self.physics.perch_on_window(rect, cat_x=self.brain.x)
+        if getattr(self, "toybox", None) is not None and self.toybox.box_until:
+            self.toybox.exit_box()
+        self.physics.x, self.physics.y = self.brain.x, self.brain.y
+        ok = self.physics.perch_on_window(rect, cat_x=self.brain.x, hwnd=hwnd, animate=True)
         if ok:
-            self.brain.x, self.brain.y = self.physics.x, self.physics.y
-            self.brain.command("perch")
+            self._was_perched = True
+            # yuva pencere tepesi: kedi orada yatay dolaşır/oturur (ekran üstüne sıkışmışsa kırpılmış y)
+            cx = max(rect[0], min(max(rect[0], rect[2] - self.w), self.brain.x))
+            target_y = self.physics._perch_y(rect[1])
+            self.brain.home_x, self.brain.home_y = cx, target_y
+            jump = getattr(self.physics, "_jump", None)
+            if jump is not None:
+                if abs(jump["x1"] - jump["x0"]) > 1.0:
+                    self.brain.facing = 1 if jump["x1"] > jump["x0"] else -1
+                self.brain._change("jump", duration=self.physics.JUMP_SECONDS + 0.2)
+            else:
+                self.brain._change("perch", duration=15.0)
             self._apply_position()
-            self.say("Pencere tepesine zıpladım! 🐾", 4)
+            if not quiet:
+                self.say("Pencere tepesine zıpladım! 🐾", 4)
         return ok
 
     def walk_on_taskbar_cmd(self):
         """Move the cat down onto the top edge of the Windows taskbar."""
         if getattr(self, "physics", None) is None:
             return False
+        self._stop_laser()
+        self._stop_perch()
         tb = window_utils.taskbar_rect()
         if tb is None:
             self.say("Görev çubuğu bulunamadı.", 3)
@@ -544,19 +783,50 @@ class DesktopCat:
         self.say(f"Retro Pixel modu {'açıldı' if enabled else 'kapandı'}.", 3)
         return enabled
 
-    def toggle_rubber_duck(self):
-        if getattr(self, "rubber_duck", None) is None:
+    def choose_weather_city(self, city=None):
+        """Gerçek hava durumunu aç (şehir) ya da kapat (boş). Açıkken şehir adı Open-Meteo'ya gider."""
+        if getattr(self, "weather", None) is None:
             return False
-        active = not self.rubber_duck.active
-        if active:
-            self.rubber_duck.activate()
-            self.settings.set("rubber_duck_mode", True)
-            self.say("Lastik Ördek modu açık! Sorunu adım adım anlat. 🦆", 5)
-        else:
-            self.rubber_duck.deactivate()
-            self.settings.set("rubber_duck_mode", False)
-            self.say("Lastik Ördek modu kapatıldı.", 3)
-        return active
+        if city is None:
+            from tkinter import simpledialog
+            city = simpledialog.askstring(
+                "Hava durumu",
+                "Şehir adı (boş bırakırsan kapanır). "
+                "Açıkken yalnız şehir adı Open-Meteo'ya gönderilir.",
+                initialvalue=self.settings.get("weather_city", ""), parent=self.root)
+            if city is None:
+                return False
+        city = city.strip()
+        if city and city == self.weather.city and self.settings.get("weather_enabled", False):
+            text = self.weather.describe()      # aynı şehir: yeniden çekmeden mevcut durumu söyle
+            if text:
+                self.say(text, 7)
+            else:
+                self.weather.request_announce()
+                self.say(f"{city} için bakıyorum… 🌦️", 4)
+            return True
+        self.settings.update(weather_city=city, weather_enabled=bool(city))
+        self.weather.set_city(city)
+        self.brain.weather = None
+        self.say(f"{city} için bakıyorum… 🌦️" if city else "Hava durumu kapatıldı.", 4)
+        return bool(city)
+
+    def _step_weather(self):
+        watcher = getattr(self, "weather", None)
+        if watcher is None:
+            return
+        watcher.poll(self.settings.get("weather_enabled", False))
+        self.brain.weather = watcher.condition
+        text = watcher.take_announcement()   # şehir seçildikten sonraki ilk sonuç hemen söylenir
+        if text:
+            self.say(text, 7)
+        change = watcher.take_change()
+        if change:
+            from weather import MESSAGES, SETTLE
+            if change in SETTLE:
+                self.brain.settle(SETTLE[change])
+            if change in MESSAGES and self.settings.get("speech_bubbles", True):
+                self.say_unsolicited(MESSAGES[change], 7)
 
     def toggle_lofi_ambience(self):
         lofi = getattr(getattr(self, "acoustic", None), "lofi", None)
@@ -660,6 +930,10 @@ class DesktopCat:
     def _on_speak_click(self):
         self.assistant.show()
 
+    def open_chat(self):
+        """Komut yazma balonunu aç (çift tık / HUD kartı)."""
+        self.assistant.show()
+
     def assistant_history(self):
         self.assistant.show_history()
 
@@ -667,12 +941,56 @@ class DesktopCat:
         kb = getattr(getattr(self, "acoustic", None), "keyboard", None)
         if kb is not None:
             try:
-                if kb.record_keystroke() == "keyboard_trill" and self.settings.get("sound", True):
-                    sound.play("chirp", enabled=True)
+                kb.record_keystroke()
             except Exception:
-                logging.debug("Keyboard reactive audio failed", exc_info=True)
+                logging.debug("Keyboard reactive tracking failed", exc_info=True)
+
+    def _sound_enabled(self) -> bool:
+        return bool(self.sound_var.get()) and bool(self.settings.get("sound", True)) and not self.muted
+
+    def _play_cat_sound(self, kind: str, volume: int = 70) -> None:
+        if not self._sound_enabled():
+            return
+        try:
+            area = self.areas[self.area_index]
+            sounds.play(
+                kind,
+                enabled=True,
+                quality=self.settings.get("sound_quality", "high"),
+                volume=volume,
+                pan_x=self.brain.x + self.w / 2,
+                screen_w=max(1.0, area.right - area.left),
+                pitch_shift="auto",
+            )
+        except Exception:
+            logging.debug("Cat sound playback failed: %s", kind, exc_info=True)
+
+    def toggle_sound(self) -> bool:
+        """Kedi seslerini tek tıkla aç veya kapat; ayarı kaydet ve HUD'u güncelle."""
+        enabled = not bool(self.sound_var.get())
+        self.sound_var.set(enabled)
+        self.settings.set("sound", enabled)
+        orchestrator = getattr(self, "effect_orchestrator", None)
+        if orchestrator is not None:
+            orchestrator.sound_enabled = enabled
+        hud = getattr(self, "context_hud", None)
+        if hud is not None:
+            try:
+                if hud.visible or callable(getattr(hud, "refresh", None)):
+                    hud.refresh()
+            except tk.TclError:
+                pass
+        self.say("Sesler açıldı" if enabled else "Sesler kapatıldı", 3)
+        return enabled
 
     def command(self, name):
+        self.brain.hide_internal_ball = False
+        if name not in ("pause", "resume", "laser_chase"):
+            self._stop_laser()
+        if name in ("follow", "wander", "play", "roll", "box_sit", "drink", "scratch"):
+            self._stop_perch()
+        if name not in ("pause", "resume") and getattr(self, "toybox", None) is not None and self.toybox.box_until:
+            self.toybox.exit_box()
         if name in ("dance", "watch"):
             self._manual_reaction = "music" if name == "dance" else "video"
             self._manual_reaction_until = time.monotonic() + 20.0
@@ -682,6 +1000,15 @@ class DesktopCat:
             self._manual_reaction = None
             self._manual_reaction_until = 0.0
             self.brain.command(name)
+            if name == "feed" and self.brain.state == "sit":
+                self.brain.visual_pose = "eat"
+                self.brain.visual_pose_duration = 4.0
+            elif name == "pet" and self.brain.state == "sit":
+                self.brain.visual_pose = "purr_idle"
+                self.brain.visual_pose_duration = 3.5
+        if name == "pet":
+            self._play_cat_sound("purr", volume=70)
+            self._prev_sound_state = self.brain.state
         self._sync_effect_state()
         self.say({
             "pet": "♥ Mırrr… Seni seviyorum!",
@@ -702,11 +1029,19 @@ class DesktopCat:
             "yawn": "Uykum mu geliyor ne…",
         }.get(name, ""), 5)
         # Görsel efenkler
-        self.effect_orchestrator.cat_screen_x = self.brain.x + self.w / 2
-        if name == "pet":
-            self.effect_orchestrator.trigger("pet", 0, 0)
-        elif name == "feed":
-            self.effect_orchestrator.trigger("feed", 0, 0)
+        orchestrator = getattr(self, "effect_orchestrator", None)
+        if orchestrator is not None:
+            orchestrator.cat_screen_x = self.brain.x + self.w / 2
+            if name in ("pet", "feed"):
+                orchestrator.trigger(name, 0, 0)
+
+        if name in ("pet", "feed", "play") and getattr(self, "affection", None) is not None:
+            try:
+                ev = self.affection.record_action(name)
+                if ev.get("leveled_up"):
+                    self.say(f"Dostluk Seviye {ev['level']} oldu! ✨", 6)
+            except Exception:
+                logging.debug("Affection action failed", exc_info=True)
 
         if name in ("pet", "feed", "play") and getattr(self, "affection", None) is not None:
             try:
@@ -720,6 +1055,13 @@ class DesktopCat:
 
     def _sync_effect_state(self):
         state = self.brain.state
+        prev_sound = getattr(self, "_prev_sound_state", self._effect_state)
+        if state != prev_sound:
+            if state == "yawn":
+                self._play_cat_sound("yawn", volume=70)
+            elif prev_sound == "sleep" and state not in ("sleep", "paused") and not getattr(self.brain, "paused", False):
+                self._play_cat_sound("meow", volume=65)
+            self._prev_sound_state = state
         if state == self._effect_state:
             return
         self.effect_orchestrator.cat_screen_x = self.brain.x + self.w / 2
@@ -734,6 +1076,13 @@ class DesktopCat:
 
     # -- mouse ------------------------------------------------------------
     def _press(self, event):
+        if IS_MAC and (
+            (getattr(event, "state", 0) & 0x4)
+            or (time.monotonic() - getattr(self, "_last_menu_toggle", -10.0) < 0.35)
+        ):
+            return
+        self._pressed_while_active = window_utils.last_left_click_was_active() and window_utils.mac_app_is_active()
+        self._pressed_hud_was_open = bool(getattr(getattr(self, "context_hud", None), "visible", False))
         self.drag_origin = (event.x_root, event.y_root, self.brain.x, self.brain.y)
         self.dragged = False
 
@@ -746,6 +1095,15 @@ class DesktopCat:
         if dx * dx + dy * dy > 25:
             self.dragged = True
         if self.dragged:
+            phys = getattr(self, "physics", None)
+            if phys is not None and phys.perched:
+                phys.perched = False
+                phys.perch_rect = None
+                phys.perch_hwnd = None
+                phys._jump = None
+                phys.surface = "ground"
+            if getattr(self, "toybox", None) is not None and self.toybox.box_until:
+                self.toybox.exit_box()
             self.brain.move_to(x + dx, y + dy)
             self._apply_position()
 
@@ -753,14 +1111,31 @@ class DesktopCat:
         if self.drag_origin is None:
             return
         self.drag_origin = None
+        pressed_active = getattr(self, "_pressed_while_active", True)
+        hud_was_open = getattr(self, "_pressed_hud_was_open", False)
+        self._pressed_while_active = True
+        self._pressed_hud_was_open = False
         if self.dragged:
             self.brain.rest()  # birakilan yer yeni yuva (move_to ayarladi)
             self.say("Burayı sevdim!", 5)
             return
-        # Tek tık (sürükle değil): kedile konuşma penceresi aç
-        self._on_speak_click()
+        if (
+            pressed_active
+            and not hud_was_open
+            and not self.menu_open
+            and (time.monotonic() - getattr(self, "_last_menu_toggle", -10.0) >= 0.35)
+        ):
+            # Tek tık (sürükle değil): sevme. Sohbet orta tık / HUD ile açılır.
+            self.command("pet")
+
+    def _show_menu_at(self, x_root, y_root):
+        self._show_menu(types.SimpleNamespace(x_root=int(x_root), y_root=int(y_root)))
 
     def _show_menu(self, event):
+        now = time.monotonic()
+        if now - getattr(self, "_last_menu_toggle", -10.0) < 0.20:
+            return
+        self._last_menu_toggle = now
         self.drag_origin = None
         hud = getattr(self, "context_hud", None)
         if hud is not None:
@@ -834,11 +1209,23 @@ class DesktopCat:
         self.companions = []
         count = max(0, min(3, int(self.settings.get("friends") or 0)))
         area = self.areas[self.area_index]
-        for _ in range(count):
+        step_x = self.w + 24
+        for idx in range(count):
+            # Arkadaş kediyi ana kedinin hemen yanında (görünür yerde) başlat.
+            prefer_left = self.brain.x - (idx + 1) * step_x
+            prefer_right = self.brain.x + (idx + 1) * step_x
+            if prefer_left >= area.left + 12:
+                mx = prefer_left
+            elif prefer_right <= area.right - self.w - 12:
+                mx = prefer_right
+            else:
+                mx = area.left + 40 + idx * step_x
+            my = self.brain.y
             try:
                 mate = Companion(self.root, area, self.settings.scale,
                                  self.settings.get("skin"), self.settings.get("needs"),
-                                 self.settings.get("activity_level"))
+                                 self.settings.get("activity_level"),
+                                 start_pos=(mx, my), on_menu=self._show_menu, index=idx)
                 mate.set_opacity(self.settings.get("opacity"))
                 self.companions.append(mate)
             except tk.TclError:
@@ -850,6 +1237,8 @@ class DesktopCat:
 
     # -- monitors / geometry ---------------------------------------------
     def next_monitor(self):
+        self._stop_laser()
+        self._stop_perch()
         self.areas = monitor_bounds(self.root)
         self.area_index = (self.area_index + 1) % len(self.areas)
         area = self.areas[self.area_index]
@@ -878,6 +1267,8 @@ class DesktopCat:
             self._poll_tray()
             if self.closed:
                 return
+            if IS_MAC and not self.hidden:
+                window_utils.poll_mac_right_clicks(pointer_position(self.root))
             self._tick_focus(now)
             if self.drag_origin is None and not self.menu_open:
                 pointer = pointer_position(self.root)
@@ -890,21 +1281,32 @@ class DesktopCat:
                     self._chat_anchor = None
                 # Keep the input close enough to type while the cat remains animated.
                 old_x, old_y = self.brain.x, self.brain.y
+                prev_state = self.brain.state
                 self.brain.step(dt, pointer)
-                if compact:
+                if not self.brain.paused:
+                    self._maybe_post_meal_groom(prev_state)
+                physics = getattr(self, "physics", None)
+                if compact and physics is not None and (physics.falling or physics.perched or physics.chasing_laser):
+                    self._chat_anchor = (self.brain.x, self.brain.y)   # düşüş/tünek/lazer çapaya takılmasın
+                elif compact:
                     ax, ay = self._chat_anchor
                     self.brain.x = max(ax - 24, min(ax + 24, self.brain.x))
                     self.brain.y = max(ay - 16, min(ay + 16, self.brain.y))
+                elif getattr(self.brain, "_goal", False):
+                    pass   # kullanıcının koyduğu oyuncağa gidiş yavaşlatılmaz
                 elif (reaction == "gaming" and self.settings.get("focus_mode", True)) or self._still_reaction or self.focus.phase == "work":
                     self.brain.x = old_x + (self.brain.x - old_x) * .15
-                    self.brain.y = old_y + (self.brain.y - old_y) * .15
+                    # dikey (düşüş/yuvaya iniş) sönümlenmez: kedi havada asılı kalmasın
                 self.brain.activity_reaction = (self._manual_reaction
                                                 if now < self._manual_reaction_until else reaction)
                 self._sync_effect_state()
                 if not self.brain.paused:
                     self.animation_time += dt
-                self.effect_orchestrator.step(dt)
-                self._step_v2_subsystems(dt, pointer, now)
+                    self.effect_orchestrator.step(dt)
+                    self._step_v2_subsystems(dt, pointer, now)
+                    self._maybe_auto_perch(now, reaction)
+                else:
+                    self._hide_laser_dot(destroy=False)
                 inv_dt = 1.0 / max(dt, 0.001)
                 self.brain.vx = (self.brain.x - old_x) * inv_dt
                 self.brain.vy = (self.brain.y - old_y) * inv_dt
@@ -917,6 +1319,8 @@ class DesktopCat:
                 self._update_speech(now, pointer)
             if not self.hidden:
                 self._apply_position()
+            else:
+                self._hide_laser_dot(destroy=False)
             message = self.message if now < self.message_until else self._get_speech_message(now)
             if self.hidden or self.assistant.compact_visible:
                 self.bubble.hide()
@@ -944,6 +1348,9 @@ class DesktopCat:
                     effect_orchestrator=self.effect_orchestrator,
                 )
             self._frames += 1
+            if IS_MAC and not self.hidden and now - getattr(self, "_last_mac_chrome", 0.0) >= 2.5:
+                self._last_mac_chrome = now
+                window_utils._mac_apply_window_chrome(order_front=True)
             if self._frames % 20 == 0:
                 self._refresh_status()
         except Exception:
@@ -955,8 +1362,18 @@ class DesktopCat:
 
     def _step_v2_subsystems(self, dt, pointer, now):
         """Advance v2.0 physics, fish pond, health guard, and periodic sensors safely."""
+        try:
+            self._step_toys(dt, now)
+        except Exception:
+            logging.debug("ToyBox step failed", exc_info=True)
         if getattr(self, "physics", None) is not None:
             try:
+                area = self.areas[self.area_index]
+                self.physics.bounds = (area.left, area.top, area.right, area.bottom)
+                dot = getattr(self, "_laser_dot", None)
+                if dot is not None and (self.hidden or not self.physics.chasing_laser):
+                    if dot.visible:
+                        dot.hide()
                 if self._frames % 30 == 0 or not hasattr(self, "_cached_has_toast"):
                     self._cached_has_toast = bool(window_utils.has_toast_notification())
                 has_toast = self._cached_has_toast
@@ -968,8 +1385,22 @@ class DesktopCat:
                     or self.physics.paw_trails
                     or has_toast
                 ):
-                    window_rect = window_utils.active_window_rect(ignore_hwnds=self._own_hwnds())
+                    if self.physics.chasing_laser and not self.hidden and pointer is not None:
+                        dot = self._ensure_laser_dot()
+                        if dot is not None:
+                            if not dot.visible:
+                                dot.show(pointer[0], pointer[1])
+                            else:
+                                dot.update(pointer[0], pointer[1], dt)
+                    perch_hwnd = getattr(self.physics, "perch_hwnd", None)
+                    if self.physics.perched and perch_hwnd:
+                        window_rect = window_utils.window_rect(perch_hwnd)   # kilitli pencereyi izle
+                    elif self.physics.perched:
+                        window_rect = window_utils.active_window_rect(ignore_hwnds=self._own_hwnds())
+                    else:
+                        window_rect = None
                     taskbar_rect = window_utils.taskbar_rect()
+                    was_jumping = bool(getattr(self.physics, "_jump", None) is not None)
                     px, py = self.physics.step(
                         dt, self.brain.x, self.brain.y,
                         facing=getattr(self.brain, "facing", 1),
@@ -987,6 +1418,50 @@ class DesktopCat:
                         or self.physics.toast_curious
                     ):
                         self.brain.x, self.brain.y = px, py
+                        if self.physics.chasing_laser:
+                            self.brain.home_x, self.brain.home_y = px, py
+                            laser_prop = next(
+                                (p for p in self.physics.props if p.active and p.kind == "laser"),
+                                None,
+                            )
+                            if laser_prop is not None:
+                                ldx = laser_prop.x - (px + self.w * 0.5)
+                                ldy = laser_prop.y - (py + self.h * 0.5)
+                                if abs(ldx) > 2.0:
+                                    self.brain.facing = 1 if ldx > 0 else -1
+                                if math.hypot(ldx, ldy) <= 28.0:
+                                    if self.brain.state != "play":
+                                        self.brain._change("play", duration=float("inf"))
+                                    self.brain.hide_internal_ball = True
+                                else:
+                                    if self.brain.state != "laser_chase":
+                                        self.brain._change("laser_chase", duration=float("inf"))
+                                    self.brain.hide_internal_ball = False
+                        elif self.physics.perched:
+                            jump = getattr(self.physics, "_jump", None)
+                            if jump is not None:
+                                if abs(jump["x1"] - jump["x0"]) > 1.0:
+                                    self.brain.facing = 1 if jump["x1"] > jump["x0"] else -1
+                                if self.brain.state != "jump":
+                                    self.brain.state = "jump"
+                            else:
+                                self.brain.home_y = py
+                                if was_jumping:
+                                    self.brain.home_x, self.brain.home_y = px, py
+                                    self.brain._change("perch", duration=15.0)
+                    perched = bool(self.physics.perched)
+                    if getattr(self, "_was_perched", False) and not perched:
+                        # düştü/indi: yuva yeniden zemine ve perch pozu sonlandır
+                        self.brain.home_x = self.brain.x
+                        self.brain.home_y = area.bottom - self.h
+                        if self.brain.state in ("perch", "jump"):
+                            if self.physics.startled:
+                                self.brain._change("startle", duration=0.8)
+                            else:
+                                self.brain.rest()
+                    self._was_perched = perched
+                if not self.physics.chasing_laser and self.brain.state != "play":
+                    self.brain.hide_internal_ball = False
                 self.brain.props = list(self.physics.props)
                 self.brain.paw_trails = list(self.physics.paw_trails)
                 self.brain.on_bed = self.physics.on_bed
@@ -1009,6 +1484,12 @@ class DesktopCat:
             except Exception:
                 logging.debug("HealthWaterGuard step failed", exc_info=True)
 
+        if self._frames % 60 == 0:
+            try:
+                self._step_weather()
+            except Exception:
+                logging.debug("Weather step failed", exc_info=True)
+
         if self._frames % 300 == 0:
             if getattr(self, "hardware_mind", None) is not None:
                 try:
@@ -1017,14 +1498,62 @@ class DesktopCat:
                         self.say_unsolicited(thermal["message"], 6)
                 except Exception:
                     logging.debug("HardwareMind poll failed", exc_info=True)
-            if getattr(self, "git_watcher", None) is not None:
-                try:
-                    git_ev = self.git_watcher.check_git()
-                    if git_ev:
-                        self.say(git_ev["message"], 6)
-                        self.command("dance")
-                except Exception:
-                    logging.debug("GitTerminalWatcher poll failed", exc_info=True)
+
+    def _glide_to_video_corner(self) -> bool:
+        """Video izlerken altyazıları kapatmamak için en yakın alt köşeye yumuşakça geç."""
+        phys = getattr(self, "physics", None)
+        if phys is not None and (phys.perched or phys.falling or phys.chasing_laser):
+            return False
+        if self.brain.paused or self.brain.state in ("follow", "play", "sleep", "box_sit", "drink", "eat", "scratch"):
+            return False
+        area = self.areas[self.area_index]
+        left_x = area.left + 18
+        right_x = max(area.left, area.right - self.w - 18)
+        bottom_y = max(area.top, area.bottom - self.h - 14)
+        corner_x = right_x if self.brain.x >= (left_x + right_x) * 0.5 else left_x
+        self.brain.home_x, self.brain.home_y = corner_x, bottom_y
+        if math.hypot(corner_x - self.brain.x, bottom_y - self.brain.y) > 40.0:
+            return bool(self.brain.go_to(corner_x, bottom_y))
+        return False
+
+    def _maybe_post_meal_groom(self, prev_state: str):
+        """Mama veya süt sonrası gerçek bir kedi gibi kısa bir pati temizleme (groom) yap."""
+        if (
+            prev_state in ("drink", "eat")
+            and self.brain.state != prev_state
+            and self.brain.state in ("sit", "look", "wander")
+            and random.random() < 0.6
+        ):
+            self.brain._change("groom", duration=random.uniform(3.0, 5.0))
+
+    def _maybe_auto_perch(self, now: float, reaction: str):
+        """Kullanıcı aktif çalışırken seyrek olarak aktif pencere tepesine zıplayıp izle."""
+        if now < getattr(self, "_next_auto_perch_at", float("inf")):
+            return
+        self._next_auto_perch_at = now + random.uniform(75.0, 120.0)
+        if reaction not in ("coding", "writing", "reading"):
+            return
+        if self.hidden or self.brain.paused or self.assistant.compact_visible or self.focus.phase == "work":
+            return
+        if self.brain.state not in ("wander", "sit", "look") or getattr(self.brain, "_goal", False):
+            return
+        phys = getattr(self, "physics", None)
+        if phys is None or phys.perched or phys.falling or phys.chasing_laser or phys.in_box:
+            return
+        toybox = getattr(self, "toybox", None)
+        if toybox is not None and toybox.box_until:
+            return
+        hwnd = window_utils.foreground_hwnd(ignore_hwnds=self._own_hwnds())
+        rect = window_utils.window_rect(hwnd) if hwnd else None
+        if not rect or (rect[2] - rect[0]) < max(240, self.w + 40) or (rect[3] - rect[1]) < 120:
+            return
+        try:
+            from context import _is_fullscreen
+            if _is_fullscreen(hwnd):
+                return
+        except Exception:
+            return
+        self.perch_active_window(quiet=True)
 
     def _apply_activity_reaction(self, now):
         """Algılanan etkinlik değiştiğinde bir kez: sakin bir duruma geç, seyrek kısa mesaj."""
@@ -1034,11 +1563,20 @@ class DesktopCat:
         self._still_reaction = bool(reaction.get("still"))
         if now < self._manual_reaction_until or self.assistant.compact_visible:
             return
-        state = {"loaf": "sit"}.get(reaction.get("state"), reaction.get("state"))
-        self.brain.settle(state)
-        if self._still_reaction and self.brain.state == "wander":
-            self.brain.rest()   # yalnız kendiliğinden gezinmeyi durdur; takip/oyun/uyku bozulmaz
-        if reaction.get("message") and self.settings.get("speech_bubbles", True):
+        if reaction.get("welcome_back"):
+            self.brain.settle("stretch")
+            self._prev_sound_state = self.brain.state
+            if self._sound_enabled():
+                self._play_cat_sound("chirp", volume=int(self.settings.get("sound_volume", 70) or 70))
+        elif reaction.get("class") == "video":
+            if not self._glide_to_video_corner():
+                self.brain.settle("sit")
+        else:
+            state = {"loaf": "sit", "watch": "sit"}.get(reaction.get("state"), reaction.get("state"))
+            self.brain.settle(state)
+        if self._still_reaction and self.brain.state == "wander" and not getattr(self.brain, "_goal", False):
+            self.brain.rest()   # yalnız kendiliğinden gezinmeyi durdur; takip/oyun/uyku/hedef yürüyüşü bozulmaz
+        if reaction.get("message") and self.settings.get("speech_bubbles", True) and now >= self.message_until:
             self.say_unsolicited(reaction["message"], 8)
 
     def _time_of_day(self, now):
@@ -1066,6 +1604,9 @@ class DesktopCat:
             logging.debug("could not persist position", exc_info=True)
         for mate in self.companions:
             mate.destroy()
+        if getattr(self, "toybox", None) is not None:
+            self.toybox.close()
+        self._hide_laser_dot(destroy=True)
         shortcut = getattr(self, "shortcut", None)
         if shortcut:
             shortcut.close()
@@ -1076,13 +1617,19 @@ class DesktopCat:
             self.root.after_cancel(self.after_id)
         acoustic = getattr(self, "acoustic", None)
         if acoustic is not None:
-            for sub in (getattr(acoustic, "lofi", None), getattr(acoustic, "tts", None)):
+            for sub in (getattr(acoustic, "lofi", None),):
                 if sub is not None and callable(getattr(sub, "stop", None)):
                     try:
                         sub.stop()
                     except Exception:
                         pass
         self.assistant.close()
+        hud = getattr(self, "context_hud", None)
+        if hud is not None:
+            try:
+                hud.destroy()
+            except Exception:
+                pass
         self.bubble.destroy()
         self.root.destroy()
 
@@ -1090,7 +1637,24 @@ class DesktopCat:
         self.root.mainloop()
 
 
+_instance_lock = None
+
+
 def acquire_instance():
+    if IS_MAC:
+        # Tek kopya: veri klasöründeki kilit dosyası; süreç kapanınca kilit kendiliğinden kalkar.
+        import fcntl
+        global _instance_lock
+        directory = Path(os.environ["LOCALAPPDATA"]) / "Komur"
+        directory.mkdir(parents=True, exist_ok=True)
+        lock = open(directory / "komur.lock", "w")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock.close()
+            return (None, False)
+        _instance_lock = lock
+        return (None, True)
     if not IS_WINDOWS:
         return (None, True)
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -1114,6 +1678,8 @@ def main():
     enable_dpi_awareness()
     handle, first = acquire_instance()
     if not first:
+        if not IS_WINDOWS:
+            return   # macOS: zaten açık bir Kömür var
         # another instance is already running; poke it to open its panel.
         kernel = ctypes.windll.kernel32
         kernel.SetEvent.argtypes = [wintypes.HANDLE]
@@ -1151,13 +1717,7 @@ def main():
                     result["compact"] = app.assistant.compact_visible and app.assistant.window is None
                     app.assistant.show_history()
                     result["history_window"] = app.assistant.window.winfo_exists() == 1
-                    result["voice"] = app.assistant.voice.status()
-                    if result["voice"]["stt_available"]:
-                        from faster_whisper import WhisperModel
-                        import numpy as np
-                        model = WhisperModel(str(app.assistant.voice.model_dir), device="cpu", compute_type="int8", local_files_only=True)
-                        list(model.transcribe(np.zeros(16000, dtype=np.float32), language="tr", vad_filter=True)[0])
-                        result["voice_runtime"] = True
+                    result["command"] = app.assistant.commands.respond("uyu").reply
                     app.assistant.memory.remember("Kurulum test notu")
                     result["memory"] = bool(app.assistant.memory.notes())
                     result["ok"] = True
@@ -1176,7 +1736,7 @@ def main():
         try:
             messagebox.showerror(
                 "Kömür açılamadı",
-                "Uygulama başlatılamadı. Ayrıntılar: %LOCALAPPDATA%\\Komur\\komur.log")
+                "Uygulama başlatılamadı. Ayrıntılar: " + str(log_path()))
         except Exception:
             pass
         raise

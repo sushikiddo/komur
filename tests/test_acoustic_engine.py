@@ -145,78 +145,6 @@ class KeyboardReactiveTests(unittest.TestCase):
         self.assertEqual(kb.evaluate_rate(4.5, now=7.0), "keyboard_trill")
 
 
-class NaturalTurkishTTSTests(unittest.TestCase):
-    def test_edge_tts_primary_and_pitch(self):
-        captured = {}
-
-        class FakeCommunicate:
-            def __init__(self, text, voice, pitch):
-                captured["text"] = text
-                captured["voice"] = voice
-                captured["pitch"] = pitch
-
-            async def save(self, path):
-                with open(path, "wb") as f:
-                    f.write(b"ID3_FAKE_MP3")
-
-        fake_mod = types.SimpleNamespace(Communicate=FakeCommunicate)
-        played = []
-        tts = ae.NaturalTurkishTTS(
-            edge_voice="tr-TR-AhmetNeural",
-            pitch="+15Hz",
-            audio_player=lambda p: played.append(p) or True,
-            sapi_fallback=lambda _t: True,
-        )
-        with mock.patch.dict(sys.modules, {"edge_tts": fake_mod}):
-            backend = tts.speak_sync("Merhaba sahip!")
-
-        self.assertEqual(backend, "edge-tts")
-        self.assertEqual(captured["voice"], "tr-TR-AhmetNeural")
-        self.assertEqual(captured["pitch"], "+15Hz")
-        self.assertEqual(len(played), 1)
-
-    def test_piper_offline_and_sapi_fallback_chain(self):
-        # edge-tts yok, piper var -> piper-tts seçilmeli
-        fake_edge_missing = None
-        tmpdir = os.path.join(ROOT, "tests", "_tmp_piper")
-        os.makedirs(tmpdir, exist_ok=True)
-        model_path = os.path.join(tmpdir, "tr.onnx")
-        try:
-            with open(model_path, "wb") as f:
-                f.write(b"onnx")
-
-            def fake_subproc(cmd, **kwargs):
-                out_idx = cmd.index("--output_file") + 1
-                with open(cmd[out_idx], "wb") as wf:
-                    wf.write(ae.samples_to_wav([0.1] * 100))
-                return mock.MagicMock(returncode=0)
-
-            tts_piper = ae.NaturalTurkishTTS(
-                piper_bin="piper",
-                piper_model=model_path,
-                audio_player=lambda _p: True,
-                sapi_fallback=lambda _t: True,
-            )
-            with mock.patch.dict(sys.modules, {"edge_tts": fake_edge_missing}), \
-                 mock.patch("shutil.which", return_value="C:/piper/piper.exe"), \
-                 mock.patch("subprocess.run", side_effect=fake_subproc):
-                self.assertEqual(tts_piper.speak_sync("Miyav"), "piper-tts")
-
-            # Ne edge-tts ne piper -> son çare SAPI
-            tts_sapi = ae.NaturalTurkishTTS(
-                piper_model=None,
-                audio_player=lambda _p: False,
-                sapi_fallback=lambda t: t == "Son çare",
-            )
-            with mock.patch.dict(sys.modules, {"edge_tts": fake_edge_missing}):
-                self.assertEqual(tts_sapi.speak_sync("Son çare"), "sapi")
-        finally:
-            if os.path.exists(model_path):
-                os.remove(model_path)
-            if os.path.isdir(tmpdir):
-                os.rmdir(tmpdir)
-
-
 class LofiAmbienceTests(unittest.TestCase):
     def test_generate_lofi_ambience_wav_and_player(self):
         wav_bytes = ae.generate_lofi_ambience_wav(duration=1.0)
@@ -239,33 +167,6 @@ class LofiAmbienceTests(unittest.TestCase):
             player.stop()
             self.assertFalse(player.is_playing)
             fake_channel.stop.assert_called_once()
-
-
-class MicNoiseMonitorTests(unittest.TestCase):
-    def test_startle_and_deep_sleep_transitions(self):
-        mon = ae.MicNoiseMonitor(
-            startle_threshold=0.35,
-            silence_threshold=0.02,
-            deep_sleep_seconds=180.0,
-            startle_cooldown=5.0,
-        )
-        self.assertAlmostEqual(mon.compute_rms([0.5, -0.5, 0.5, -0.5]), 0.5, places=5)
-        self.assertEqual(mon.compute_rms([]), 0.0)
-
-        # Yüksek ses -> startle
-        self.assertEqual(mon.process_rms(0.45, now=10.0), "startle")
-        # Cooldown içi tekrar startle dönmez
-        self.assertIsNone(mon.process_rms(0.50, now=12.0))
-
-        # Uzun süreli sessizlik -> 180 sn sonra deep_sleep
-        self.assertIsNone(mon.process_rms(0.005, now=20.0))
-        self.assertIsNone(mon.process_rms(0.005, now=120.0))
-        self.assertEqual(mon.process_rms(0.005, now=200.0), "deep_sleep")
-
-        # Orta düzey ses sessizlik sayacını sıfırlar
-        self.assertIsNone(mon.process_rms(0.10, now=205.0))
-        self.assertEqual(mon.silence_seconds, 0.0)
-        self.assertEqual(mon.state, "awake")
 
 
 class AudioAndSoundsIntegrationTests(unittest.TestCase):

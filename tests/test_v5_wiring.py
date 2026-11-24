@@ -25,47 +25,16 @@ def test_focus_tick_shows_message_and_settles(app_factory):
     assert app.focus.phase == "break" and "Mola" in app.message
 
 
-def test_wake_default_off_and_start_stop(app_factory):
-    app = app_factory()
-    ui = app.assistant
-    assert app.settings.get("wake_word") is False
-    calls = []
-    ui.voice.start_wake_listener = lambda cb, **k: calls.append(("start", cb))
-    ui.voice.stop_wake_listener = lambda: calls.append(("stop",))
-    ui.start_wake()
-    deadline = time.monotonic() + 3
-    while not calls and time.monotonic() < deadline:
-        time.sleep(.01)
-    assert calls[0][0] == "start"
-    ui.stop_wake()
-    assert calls[-1] == ("stop",)
 
 
-def test_on_wake_opens_chat_and_listens_once(app_factory):
-    app = app_factory()
-    ui = app.assistant
-    app.settings.set("wake_word", True)
-    started = []
-    ui.submit = lambda *a, **k: started.append(a)
-    ui.on_wake()
-    assert ui.compact_visible and ui.listening and len(started) == 1
-    ui.on_wake()
-    assert len(started) == 1
 
 
-def test_wake_error_is_shown_not_raised(app_factory):
-    app = app_factory()
-    ui = app.assistant
-    app.settings.set("wake_word", True)
-    ui.voice.wake_error = "Mikrofon bulunamadı."
-    ui._poll_wake_errors()
-    assert ("Ses", "Mikrofon bulunamadı.") in ui.chat_log
 
 
 def test_habit_suggestion_throttled_and_gated(app_factory):
     app = app_factory()
     ui = app.assistant
-    ui.ai.habit_suggestion = lambda: "Spotify açayım mı?"
+    ui.commands.habit_suggestion = lambda: "Spotify açayım mı?"
     app.activity_reactions.current = "gaming"
     ui._habit_check = float("-inf")
     ui.tick(1000.0)

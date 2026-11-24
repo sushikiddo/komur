@@ -14,7 +14,7 @@ settings.save = lambda: None
 assistant = SimpleNamespace(
     app=SimpleNamespace(root=root, brain=SimpleNamespace(x=350, y=470), w=143, h=154, settings=settings),
     chat_log=[("Sen", "Merhaba Kömür!"), ("Kömür", "Buradayım. Yazabilir veya Konuş'a basabilirsin. Geçmiş düğmesinden eski konuşmalarına ulaşabilirsin.")],
-    listening=False, show_history=lambda: None, toggle_listening=lambda: None, share_screen=lambda: None,
+    listening=False, show_history=lambda: None, toggle_listening=lambda: None, share_screen=lambda: None, share_clipboard=lambda: None,
     set_voice_enabled=lambda value: None, send_text=lambda value: False, cancel_listening=lambda: None)
 widget = ChatBubble(assistant)
 widget.window.overrideredirect(False)

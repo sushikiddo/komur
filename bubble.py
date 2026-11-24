@@ -29,7 +29,9 @@ if IS_WINDOWS:
     import ctypes
     from ctypes import wintypes
 
-KEY = "#ff00fe"                   # transparent color key (not used by the art)
+from window_utils import IS_MAC, MAC_KEY, apply_color_key, ensure_floating
+
+KEY = MAC_KEY if IS_MAC else "#ff00fe"   # saydam anahtar (çizimde kullanılmaz)
 FONT_FAMILY = "Segoe UI"
 FONT_SIZE = 11
 MAX_TEXT_WIDTH = 300              # px, wrap width of the text block
@@ -139,6 +141,11 @@ def work_area_at(window, x, y):
                 return (r.left, r.top, r.right, r.bottom)
         except (OSError, AttributeError, ValueError):
             pass
+    elif IS_MAC:
+        from window_utils import monitor_bounds
+        areas = monitor_bounds(window)
+        area = next((a for a in areas if a.left <= x < a.right and a.top <= y < a.bottom), areas[0])
+        return (area.left, area.top, area.right, area.bottom)
     try:
         return (0, 0, window.winfo_screenwidth(), window.winfo_screenheight())
     except tk.TclError:
@@ -192,17 +199,14 @@ class SpeechBubble:
         self.root = root
         self.window = tk.Toplevel(root)
         self.window.withdraw()
+        self.window.title("Kömür — konuşma")
         self.window.configure(bg=KEY)
         self.window.overrideredirect(True)
         try:
             self.window.attributes("-topmost", True)
         except tk.TclError:
             pass
-        if IS_WINDOWS:
-            try:
-                self.window.wm_attributes("-transparentcolor", KEY)
-            except tk.TclError:
-                pass
+        apply_color_key(self.window, KEY)
         self.canvas = tk.Canvas(self.window, bg=KEY, highlightthickness=0, borderwidth=0)
         self.canvas.pack()
         self.canvas.bind("<Button-1>", lambda e: self.hide())
@@ -478,6 +482,8 @@ class SpeechBubble:
                 _no_activate(self.window)
             self.window.attributes("-topmost", True)
             self.window.lift()
+            if IS_MAC:
+                ensure_floating(self.window, elevated=True)
         except tk.TclError:
             pass
         # deiconify can reset position on some WMs; re-place without activating

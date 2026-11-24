@@ -10,6 +10,7 @@ from typing import Callable
 
 from pc_actions import FOLDER_ALIASES, normalize, resolve_app_key
 
+WEATHER_UNKNOWN = "Hava durumuna bakamıyorum ama 'hava durumu ara' dersen tarayıcıda açarım."
 MAX_TOOL_ITERATIONS = 6            # araç turu ve eylem planı üst sınırı (ai.py de kullanır)
 
 
@@ -89,6 +90,10 @@ def parse_intent(text: str) -> tuple[str, dict, str] | None:
     raw = text.strip().replace("’", "'").replace("‘", "'")
     n = normalize(raw)
     n_clean = _strip_fillers(n)
+
+    # Kipli öneri/soru cümleleri ("açalım mı", "yapsak mı") komut değil, sohbettir: modele gider.
+    if re.search(r"\b\w{2,}(?:alim|elim|sak|sek)\s+mi\b", n_clean):
+        return None
 
     # Direct game requests bypass ambiguous app-name resolution and work without an LLM.
     game_text = re.sub(r"^steam(?:'?(?:i|den|dan|de|da))?\s+acip\s+", "", n_clean)
@@ -199,7 +204,7 @@ def parse_intent(text: str) -> tuple[str, dict, str] | None:
         return "media_play_pause", {}, ""
 
     # -- saat / tarih / sistem
-    if re.search(r"saat kac|saat ne|kac saat oldu|tarih ne|bugun (gunlerden|ayin kaci|ne)|hangi gun|bugunun tarihi", n):
+    if re.search(r"saat kac|saat ne\s*(?:oldu)?\s*$|kac saat oldu|tarih ne\b|bugun (?:gunlerden|ayin kaci|ne gun|tarih)|hangi gun|bugunun tarihi", n):
         return "get_time", {}, ""
     if re.search(r"sistem bilgi|sistem durum|bilgisayar(in)? durumu|\bram\b|cpu|islemci|disk\w*\s+(durum|bos|dolu)|pil\w*\s*(durum|yuzde|kac)|bellek|ne kadar bos", n):
         return "system_info", {}, ""
@@ -298,7 +303,8 @@ def parse_intent(text: str) -> tuple[str, dict, str] | None:
             key = resolve_app_key(key_obj)
             if key:
                 return "open_app", {"name": key}, ""
-            if len(obj.split()) <= 3:
+            # "notlarımı aç" gibi iyelik+belirtme ekli çıplak ad uygulama adı değildir; modele bırak.
+            if len(obj.split()) <= 3 and not re.search(r"(?:lar|ler)i?mi?$", obj):
                 return "open_app", {"name": key_obj}, ""
     # tek kelime uygulama adı ("spotify", "valorant")
     key = resolve_app_key(n_clean)
@@ -344,7 +350,8 @@ def _small_talk(n: str, raw: str) -> tuple[str, dict, str] | None:
     if any_in("adin ne", "kimsin", "sen kimsin", "nesin sen", "ne is yaparsin"):
         return "_chat", {}, ("Ben Kömür, masaüstünde yaşayan siyah-beyaz smokinli bir kediyim. "
                              "Uygulama açar, arama yapar, hatırlatıcı kurar, sohbet ederim.")
-    if any_in("yardim", "help", "neler yapabilirsin", "ne yapabilirsin", "komutlar", "nasil kullanilir"):
+    bare_help = re.fullmatch(r"(?:yardim|help|yardim et|yardim eder misin|yardim edebilir misin)", n.strip(" !.?"))
+    if bare_help or any_in("neler yapabilirsin", "ne yapabilirsin", "komutlar", "nasil kullanilir"):
         return "_chat", {}, ("Şöyle diyebilirsin: 'not defterini aç', 'youtube'da lofi ara', 'sesi %30 yap', "
                              "'ekran görüntüsü al', 'saat kaç', '10 dakika sonra çay diye hatırlat', "
                              "'sistem bilgisi', 'çöp kutusunu boşalt'. Tehlikeli şeyleri önce sana sorarım.")
@@ -362,5 +369,5 @@ def _small_talk(n: str, raw: str) -> tuple[str, dict, str] | None:
             "Programcı kedi mi olur? Olur, sürekli 'mouse' peşinde koşar.",
         ])
     if any_in("hava", "hava durumu", "yagmur", "sicaklik"):
-        return "_chat", {}, "Hava durumuna bakamıyorum ama 'hava durumu ara' dersen tarayıcıda açarım."
+        return "_chat", {}, WEATHER_UNKNOWN
     return None

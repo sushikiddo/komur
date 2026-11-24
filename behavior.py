@@ -22,6 +22,8 @@ ACTIVITY_PROFILES = {
 }
 IDLE_STATES = ("sit", "look", "groom")
 HOME_RETURN_DISTANCE = 60.0
+GOAL_SPEED = 150.0   # hedefli yuruyus (px/sn)
+VERTICAL_SPEED = 400.0  # dikey fark ziplama gibi hizli kapanir
 
 
 class CatBrain:
@@ -39,6 +41,7 @@ class CatBrain:
         self.home_x, self.home_y = self.x, self.y
         self.activity = activity if activity in ACTIVITY_PROFILES else "sakin"
         self._free_roam = False
+        self._goal = False
         self.state = "sit"
         self.elapsed = 0.0
         self.energy = 80.0
@@ -98,6 +101,7 @@ class CatBrain:
 
     def _change(self, state, duration=None):
         self.state, self.elapsed = state, 0.0
+        self._goal = False
         if state in ("bored", "roll"):
             self._idle_seconds = 0.0
         ranges = {
@@ -118,11 +122,24 @@ class CatBrain:
         if state == "wander":
             self._pick_wander_target()
 
+    def go_to(self, x, y, max_seconds=None):
+        """Belirli bir noktaya yürü (oyuncak/kase); varınca oturur. Takip/oyun/uyku bölünmez."""
+        if self.state in ("follow", "play", "sleep") or self.paused:
+            return False
+        self._sleep_requested = False
+        tx, ty = self._clamp(x, y)
+        if max_seconds is None:
+            max_seconds = abs(tx - self.x) / GOAL_SPEED + 3.0
+        self._change("wander", duration=max_seconds)
+        self.target_x, self.target_y = tx, ty
+        self._goal = True
+        return True
+
     def _pick_wander_target(self):
         radius = ACTIVITY_PROFILES[self.activity]["radius"]
         if self._free_roam or radius is None:
             self.target_x = self._rng.uniform(self.bounds.left, self.bounds.right)
-            self.target_y = self._rng.uniform(self.bounds.top, self.bounds.bottom)
+            self.target_y = self.y   # serbest gezinme de yalnız yatay
             return
         # kendiliginden gezinme: yuvadan uzaktaysa yuvaya don, degilse yakin bir nokta sec
         if math.hypot(self.x - self.home_x, self.y - self.home_y) > HOME_RETURN_DISTANCE:
@@ -131,7 +148,7 @@ class CatBrain:
             angle = self._rng.uniform(0, 2 * math.pi)
             dist = self._rng.uniform(radius * 0.4, radius)
             tx = self.home_x + math.cos(angle) * dist
-            ty = self.home_y + math.sin(angle) * dist * 0.4
+            ty = self.y
         self.target_x, self.target_y = self._clamp(tx, ty)
 
     def command(self, name):
@@ -209,6 +226,18 @@ class CatBrain:
                 self.facing = 1 if dx > 0 else -1
         self.x, self.y = self._clamp(self.x, self.y)
         return distance
+
+    def _walk_towards(self, x, y, speed, dt):
+        """Yatayda yuru, dikey farki hizla kapat (havada capraz yuruyus yok). Kalan mesafeyi dondurur."""
+        x, y = self._clamp(x, y)
+        self.target_x, self.target_y = x, y
+        dx, dy = x - self.x, y - self.y
+        if abs(dx) > 1:
+            self.facing = 1 if dx > 0 else -1
+        self.x += math.copysign(min(abs(dx), speed * dt), dx) if dx else 0.0
+        self.y += math.copysign(min(abs(dy), VERTICAL_SPEED * dt), dy) if dy else 0.0
+        self.x, self.y = self._clamp(self.x, self.y)
+        return max(abs(x - self.x), abs(y - self.y))
 
     def _follow(self, pointer, dt):
         if pointer is None:
@@ -314,8 +343,11 @@ class CatBrain:
         self.energy = max(0.0, min(100.0, self.energy))
         self.happiness = max(0.0, min(100.0, self.happiness))
         if self.state == "wander":
-            speed = 52 if self._free_roam else ACTIVITY_PROFILES[self.activity]["speed"]
-            remaining = self._move_towards(self.target_x, self.target_y, speed, dt)
+            if self._goal:
+                speed = GOAL_SPEED
+            else:
+                speed = 52 if self._free_roam else ACTIVITY_PROFILES[self.activity]["speed"]
+            remaining = self._walk_towards(self.target_x, self.target_y, speed, dt)
             if remaining <= 2:
                 self._change("sit")
         elif self.state == "follow":

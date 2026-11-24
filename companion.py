@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import types
 try:
     import tkinter as tk
     _TK_ERROR = tk.TclError
@@ -12,7 +13,10 @@ except ImportError:
 import skins
 from needs import HungryCatBrain
 from renderer import CatRenderer
-from window_utils import BG, HEIGHT, WIDTH, make_transparent, movement_bounds, place_window
+from window_utils import (
+    BG, HEIGHT, IS_MAC, WIDTH, ensure_floating, last_left_click_was_active, mac_app_is_active,
+    make_transparent, movement_bounds, place_window, register_mac_right_click,
+)
 
 SOCIAL_DISTANCE = 90.0
 SOCIAL_INTERACTIONS = ("mutual_groom", "pass_ball", "cuddle_sleep")
@@ -139,25 +143,81 @@ class Companion:
     """A second (or third…) cat in its own transparent window, driven by the
     main loop. Lighter than the primary cat: no panel, menu or hotkey."""
 
-    def __init__(self, root, area, scale, skin, needs, activity="sakin"):
+    def __init__(self, root, area, scale, skin, needs, activity="sakin",
+                 start_pos=None, on_menu=None, index=0):
         self.w = round(WIDTH * scale)
         self.h = round(HEIGHT * scale)
         self.window = tk.Toplevel(root)
+        self.window.withdraw()
+        title = "Kömür — Arkadaş" if index == 0 else f"Kömür — Arkadaş {index + 1}"
+        self.window.title(title)
         make_transparent(self.window)
         self.canvas = tk.Canvas(self.window, width=self.w, height=self.h,
                                 bg=BG, highlightthickness=0, borderwidth=0)
         self.canvas.pack()
         self.brain = HungryCatBrain(movement_bounds(area, self.w, self.h),
                                     width=self.w, height=self.h, needs=needs, activity=activity)
-        self.brain.move_to(area.left + 40, area.bottom - self.h - 20)
+        if start_pos is not None:
+            self.brain.move_to(start_pos[0], start_pos[1])
+        else:
+            self.brain.move_to(area.left + 40, area.bottom - self.h - 20)
         self.renderer = skins.apply_skin(CatRenderer(self.canvas, self.w, self.h), skin)
         self.animation_time = 0.0
         self.social_state = None
         self.social_partner = None
         self._ball_pass_phase = 0.0
-        self.window.geometry(f"{self.w}x{self.h}+0+0")
+        self._drag_origin = None
+        self._dragged = False
+        self._pressed_while_active = True
+        self.canvas.bind("<ButtonPress-1>", self._press)
+        self.canvas.bind("<B1-Motion>", self._drag)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
+        if callable(on_menu):
+            legacy_aqua = IS_MAC and tk.TkVersion < 8.7
+            menu_btn = "<Button-2>" if legacy_aqua else "<Button-3>"
+            self.canvas.bind(menu_btn, on_menu)
+            self.canvas.bind("<<ContextMenu>>", on_menu)
+            if IS_MAC:
+                self.canvas.bind("<Control-Button-1>", lambda e: (on_menu(e), "break")[1])
+                register_mac_right_click(
+                    self.window,
+                    lambda sx, sy, fn=on_menu: fn(types.SimpleNamespace(x_root=sx, y_root=sy)),
+                )
+        self.renderer.draw(self.brain, 0.0, "")
+        self.window.geometry(f"{self.w}x{self.h}+{round(self.brain.x)}+{round(self.brain.y)}")
         self.window.update_idletasks()
+        self.window.deiconify()
+        ensure_floating(self.window)
         self._apply_position()
+
+    def _press(self, event):
+        if IS_MAC and (getattr(event, "state", 0) & 0x4):
+            return
+        self._pressed_while_active = last_left_click_was_active() and mac_app_is_active()
+        self._drag_origin = (event.x_root, event.y_root, self.brain.x, self.brain.y)
+        self._dragged = False
+
+    def _drag(self, event):
+        if self._drag_origin is None:
+            return
+        px, py, x, y = self._drag_origin
+        dx, dy = event.x_root - px, event.y_root - py
+        if dx * dx + dy * dy > 25:
+            self._dragged = True
+        if self._dragged:
+            self.brain.move_to(x + dx, y + dy)
+            self._apply_position()
+
+    def _release(self, _event):
+        if self._drag_origin is None:
+            return
+        self._drag_origin = None
+        pressed_active = getattr(self, "_pressed_while_active", True)
+        self._pressed_while_active = True
+        if self._dragged:
+            self.brain.rest()
+        elif pressed_active:
+            self.brain.command("pet")
 
     def _apply_position(self):
         place_window(self.window, self.brain.x, self.brain.y, self.w, self.h)

@@ -35,23 +35,27 @@ def test_game_takes_priority_and_disabled_clears():
 
 def test_renderer_draws_popcorn_and_dances():
     renderer = CatRenderer.__new__(CatRenderer)
-    # Exercise the real draw dispatch with lightweight primitives.
+    # Exercise the real draw dispatch with lightweight primitives:
+    # video uses a calm realistic watching pose (no cartoon popcorn bucket),
+    # and music applies subtle head tilt instead of cartoon vertical hopping.
     renderer.canvas = SimpleNamespace(delete=lambda *a: None)
     renderer.effect_orchestrator = None
     renderer._palette = lambda: None
     renderer._pupil = lambda *a: 0
     seen = []
-    renderer._sit = lambda *a: seen.append(('sit', renderer.dx, renderer.dy))
+    renderer._sit = lambda *a: seen.append(('sit', renderer.dx, renderer.dy, renderer._dance_tilt, getattr(renderer, '_reaction', 'none')))
     renderer._poly = lambda *a, **k: seen.append(('tub',))
     renderer._line = lambda *a, **k: None
     renderer._oval = lambda *a, **k: None
     brain = SimpleNamespace(state='sit', facing=1, paused=False, activity_reaction='video')
     renderer.draw(brain, 1)
-    assert ('tub',) in seen
+    assert ('tub',) not in seen
+    assert seen[0][4] == 'video'
     seen.clear()
     brain.activity_reaction = 'music'
     renderer.draw(brain, 1)
-    assert seen[0][2] < 0
+    assert seen[0][3] != 0.0
+    assert seen[0][2] == 0.0
 
 
 def test_lobby_and_unknown_media_source_classification():

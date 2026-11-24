@@ -1,3 +1,4 @@
+import sys
 import json
 import socket
 import subprocess
@@ -116,6 +117,7 @@ class AppWorkflows(unittest.TestCase):
             result = launch_valorant('RiotClientServices.exe', lock, lambda *args: True, Mock(return_value=conn))
         self.assertEqual(result, 'pending')
 
+    @unittest.skipUnless(sys.platform == 'win32', 'Riot istemci yolları Windows yoludur')
     def test_valorant_product_arguments(self):
         with patch('pc_actions.Path.read_text', return_value=json.dumps({'rc_live': 'C:/Games/RiotClientServices.exe'})), patch('pc_actions.Path.is_file', return_value=True):
             kind, argv = resolve_app('valorant')
