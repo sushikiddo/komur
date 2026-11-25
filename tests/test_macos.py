@@ -482,6 +482,7 @@ def test_mac_send_event_hook_and_right_click_registry(monkeypatch):
         root.destroy()
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
 def test_last_left_click_was_active_gates_inactive_pet(monkeypatch, tmp_path):
     import threading
     import tkinter as tk
