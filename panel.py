@@ -7,6 +7,7 @@ Düz fonksiyonlar ve hafif özel widget'lar; ``app`` DesktopCat örneğidir. Pan
 from __future__ import annotations
 
 import os
+import sys
 import types
 from pathlib import Path
 import tkinter as tk
@@ -33,17 +34,7 @@ TEXT_MAIN = "#f0f6fc"
 TEXT_MUTED = "#8b949e"
 DANGER = "#da3633"
 
-COSTUME_LABELS = {
-    None: "Yok",
-    "bow": "Papyon",
-    "scarf": "Atkı",
-    "hat": "Şapka",
-    "glasses": "Gözlük",
-    "witch_hat": "Cadı Şapkası",
-    "winter_set": "Kış Seti",
-    "cyberpunk_collar": "Siber Tasma",
-    "headphones": "Kulaklık",
-}
+from costumes import COSTUME_LABELS
 
 PERSONA_LABELS = {
     "asil_tembel": "Asil / Tembel (INTJ)",
@@ -280,7 +271,8 @@ class LivePreviewCanvas(tk.Frame):
         if not self.winfo_exists():
             return
         skin = self.app.settings.get("skin", "komur")
-        acc = self.app.settings.get("accessory", None)
+        acc_slots = self.app.settings.get("accessories")
+        acc = acc_slots if (isinstance(acc_slots, dict) and acc_slots) else self.app.settings.get("accessory", None)
         retro = bool(self.app.settings.get("retro_mode", False))
         age_days = float(self.app.settings.get("age_days", 7.0) or 7.0)
 
@@ -293,7 +285,8 @@ class LivePreviewCanvas(tk.Frame):
         self.renderer.draw(self.brain, self._t)
 
         skin_lbl = skins.label(skin).split(" (")[0]
-        acc_lbl = COSTUME_LABELS.get(acc, str(acc))
+        from costumes import summary_label
+        acc_lbl = summary_label(acc)
         retro_tag = " • Retro" if retro else ""
         self.caption_var.set(f"{skin_lbl} • {acc_lbl}{retro_tag}")
 
@@ -542,6 +535,12 @@ def _latest_dream_text(app) -> str:
 # -- Panel açılışı ve Header -------------------------------------------------
 def show_panel(app):
     """Dark Glassmorphism kontrol panelini oluşturur veya öne getirir."""
+    if sys.platform == "darwin":
+        try:
+            import window_utils
+            window_utils.mac_activate_app()
+        except Exception:
+            pass
     if app.panel is not None and app.panel.winfo_exists():
         app.panel.deiconify()
         app.panel.lift()
@@ -557,7 +556,8 @@ def show_panel(app):
         app._refresh_status()
         return
 
-    app.panel = tk.Toplevel(app.root)
+    host = getattr(app, "_tk_host", None) or app.root
+    app.panel = tk.Toplevel(host)
     app.panel.title(TITLE)
     app.panel.configure(bg=BG_DARK)
     app.panel.resizable(False, False)
@@ -575,6 +575,8 @@ def show_panel(app):
     build_productivity_tab(app, nb)
 
     app.panel.protocol("WM_DELETE_WINDOW", app.panel.withdraw)
+    app.panel.lift()
+    app.panel.focus_force()
     app._refresh_status()
     _refresh_xp_bar(app)
 
@@ -699,20 +701,20 @@ def build_look_tab(app, nb: ttk.Notebook):
     friends_spin.bind("<Return>", lambda _e: on_friends_change(app))
     friends_spin.bind("<FocusOut>", lambda _e: on_friends_change(app))
 
-    card_costume = _make_card(left, "KOSTÜM & RETRO FİLTRE", pady=(0, 0))
-    c_grid = tk.Frame(card_costume, bg=CARD_BG)
-    c_grid.pack(fill="x", pady=(0, 6))
-    c_grid.columnconfigure(1, weight=1)
-    tk.Label(c_grid, text="Kostüm / Aksesuar", bg=CARD_BG, fg=TEXT_MAIN,
-             font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
-    costume_keys = list(COSTUME_LABELS.keys())
-    costume_box = ttk.Combobox(c_grid, state="readonly", width=20, style="Komur.TCombobox",
-                               values=[COSTUME_LABELS[k] for k in costume_keys])
-    cur_acc = app.settings.get("accessory")
-    costume_box.current(costume_keys.index(cur_acc) if cur_acc in costume_keys else 0)
-    costume_box.grid(row=0, column=1, sticky="ew", pady=4)
-    costume_box.bind("<<ComboboxSelected>>",
-                     lambda _e: on_accessory_change(app, costume_keys[costume_box.current()]))
+    card_costume = _make_card(left, "4-SLOTLU GARDIROP & RETRO FİLTRE", pady=(0, 0))
+    from wardrobe_ui import build_wardrobe_card
+    build_wardrobe_card(
+        card_costume,
+        app,
+        bg_card=CARD_BG,
+        bg_dark=BG_DARK,
+        border=CARD_BORDER,
+        accent=ACCENT,
+        text_main=TEXT_MAIN,
+        text_muted=TEXT_MUTED,
+        on_toggle=on_wardrobe_toggle,
+        on_clear=on_wardrobe_clear,
+    )
 
     retro_var = _ensure_var(
         app, "retro_var", lambda: tk.BooleanVar(value=bool(app.settings.get("retro_mode", False)))
@@ -900,8 +902,19 @@ def build_productivity_tab(app, nb: ttk.Notebook):
 
     sub_row = tk.Frame(card_actions, bg=CARD_BG)
     sub_row.pack(fill="x", pady=(6, 0))
-    _make_button(sub_row, "⏯ Duraklat / Devam", app.toggle_pause).pack(side="left", fill="x", expand=True, padx=(0, 4))
-    _make_button(sub_row, "🖥️ Diğer Ekrana Geç", app.next_monitor).pack(side="left", fill="x", expand=True, padx=(4, 0))
+    _make_button(sub_row, "🍅 Odak (25 dk)", lambda: getattr(app, "toggle_focus", lambda: None)(), accent=True).pack(side="left", fill="x", expand=True, padx=(0, 4))
+    _make_button(sub_row, "👀 Pencereden Bak", lambda: getattr(app, "peek_active_window", lambda: None)()).pack(side="left", fill="x", expand=True, padx=(4, 4))
+    if sys.platform == "darwin":
+        _make_button(sub_row, "🖥️ Çentikten Bak", lambda: getattr(app, "perch_notch", lambda: None)()).pack(side="left", fill="x", expand=True, padx=(4, 0))
+    else:
+        _make_button(sub_row, "🐾 Görev Çubuğu", lambda: getattr(app, "walk_on_taskbar_cmd", lambda: None)()).pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+    sub_row2 = tk.Frame(card_actions, bg=CARD_BG)
+    sub_row2.pack(fill="x", pady=(5, 0))
+    if sys.platform == "darwin":
+        _make_button(sub_row2, "🐾 Dock Üstünde Gez", lambda: getattr(app, "walk_on_taskbar_cmd", lambda: None)()).pack(side="left", fill="x", expand=True, padx=(0, 4))
+    _make_button(sub_row2, "⏯ Duraklat / Devam", app.toggle_pause).pack(side="left", fill="x", expand=True, padx=(0 if sys.platform != "darwin" else 4, 4))
+    _make_button(sub_row2, "🖥️ Diğer Ekrana Geç", app.next_monitor).pack(side="left", fill="x", expand=True, padx=(4, 0))
 
     card_fish = _make_card(tab, "TO-DO BALIK AVLAMA")
     input_row = tk.Frame(card_fish, bg=CARD_BG)
@@ -959,6 +972,38 @@ def build_productivity_tab(app, nb: ttk.Notebook):
     _refresh_fish()
 
     card_sys = _make_card(tab, "SİSTEM & PENCERE", pady=(0, 0))
+    power_var = _ensure_var(
+        app, "power_saver_var",
+        lambda: tk.BooleanVar(value=bool(app.settings.get("power_saver", True))),
+    )
+    pmon = getattr(app, "power_monitor", None)
+    pst = pmon.status if pmon is not None else None
+    power_sub = (
+        f"🔋 Pil modu aktif (%{pst.percent}) — düşük FPS tasarrufu"
+        if (pst and pst.on_battery and pst.percent is not None)
+        else ("🔋 Pil modu aktif — düşük FPS tasarrufu" if (pst and pst.on_battery)
+              else "Bataryada ve uykuda FPS'i otomatik düşürerek şarjı korur")
+    )
+    _make_toggle_row(
+        card_sys,
+        "Pil Tasarrufu (Akıllı FPS)",
+        power_var,
+        lambda: (app.settings.set("power_saver", bool(power_var.get())),
+                 app.say("Pil tasarrufu açıldı 🔋" if power_var.get() else "Pil tasarrufu kapatıldı ⚡", 3)),
+        subtitle=power_sub,
+    )
+    health_var = _ensure_var(
+        app, "health_reminders_var",
+        lambda: tk.BooleanVar(value=bool(app.settings.get("health_reminders", True))),
+    )
+    _make_toggle_row(
+        card_sys,
+        "Su & Gerinme Hatırlatıcısı",
+        health_var,
+        lambda: (app.settings.set("health_reminders", bool(health_var.get())),
+                 app.say("Sağlık hatırlatıcısı açıldı 💧" if health_var.get() else "Sağlık hatırlatıcısı kapatıldı.", 3)),
+        subtitle="Uzun çalışmada su içmeni ve esnemeni nazikçe hatırlatır",
+    )
     _make_toggle_row(
         card_sys,
         "Oturum Açılınca Başlat",
@@ -1069,12 +1114,34 @@ def on_density_change(app, density):
 
 
 def on_accessory_change(app, accessory):
-    app.settings.set("accessory", accessory)
+    from costumes import normalize_accessories
+    slots = normalize_accessories(accessory)
+    app.settings.update(accessory=accessory, accessories=slots)
     if getattr(app, "renderer", None) is not None:
-        app.renderer.accessory = accessory
+        app.renderer.accessory = slots or accessory
     _refresh_preview(app)
     label = COSTUME_LABELS.get(accessory, str(accessory))
     app.say(f"Kostüm: {label}", 3)
+
+
+def on_wardrobe_toggle(app, item_key):
+    from costumes import summary_label, toggle_slot_item
+    from wardrobe_ui import current_wardrobe_slots
+    slots = toggle_slot_item(current_wardrobe_slots(app.settings), item_key)
+    legacy = next(iter(slots.values()), None) if slots else None
+    app.settings.update(accessories=slots, accessory=legacy)
+    if getattr(app, "renderer", None) is not None:
+        app.renderer.accessory = slots if slots else None
+    _refresh_preview(app)
+    app.say(f"Gardırop: {summary_label(slots)}", 3)
+
+
+def on_wardrobe_clear(app):
+    app.settings.update(accessories={}, accessory=None)
+    if getattr(app, "renderer", None) is not None:
+        app.renderer.accessory = None
+    _refresh_preview(app)
+    app.say("Kombin temizlendi.", 3)
 
 
 def on_retro_change(app):

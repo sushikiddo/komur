@@ -195,8 +195,10 @@ def test_mac_companion_and_hud_are_floating_non_docmodal_and_keyable():
         assert "Kömür — Hızlı Menü" in by_title
         hud_ns = by_title["Kömür — Hızlı Menü"][0]
         assert o.get_long(hud_ns, o.sel("level")) >= window_utils._NS_ELEVATED_LEVEL
-        assert not (o.get_ulong(hud_ns, o.sel("styleMask")) & 64)
-        assert o.get_bool(hud_ns, o.sel("canBecomeKeyWindow"))
+        hud_style = o.get_ulong(hud_ns, o.sel("styleMask"))
+        assert not (hud_style & 64)
+        # NonactivatingPanel odak çalmadan tıklanabilir; eski TKWindow ise keyable olmalıdır
+        assert bool(hud_style & window_utils._NS_NONACTIVATING_PANEL_MASK) or o.get_bool(hud_ns, o.sel("canBecomeKeyWindow"))
         hud.destroy()
         mate.destroy()
     finally:

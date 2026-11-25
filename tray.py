@@ -1,20 +1,27 @@
-"""A minimal Windows system-tray icon implemented with ctypes (stdlib only).
+"""Native system-tray / menu-bar icon (Windows Win32 ctypes + macOS Tk 9.1 systray).
 
-Follows the same pattern as the panel hotkey: a dedicated daemon thread owns a
-message-only window and the tray icon, runs the Win32 message loop, and signals
-the Tk loop through threading.Events which it polls. Left/double click asks to
-show the panel; right click opens a native popup menu (Panel / Çıkış).
-
+Windows: dedicated daemon thread owns a hidden window + tray icon (loads bundled
+assets/komur.ico with IDI_APPLICATION fallback) and signals the Tk loop via
+threading.Events & SimpleQueue.
+macOS: native ``tk systray`` menu-bar icon with crisp cat-head graphic & quick menu.
 Any failure during setup disables the tray cleanly — the cat keeps running.
 """
 from __future__ import annotations
 import ctypes
 import logging
+from pathlib import Path
+import queue
 import sys
 import threading
 
 _WINDOWS = sys.platform == "win32"
 _MAC = sys.platform == "darwin"
+
+
+def _asset_path(name: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / "assets" / name
+
 
 if _WINDOWS:
     from ctypes import wintypes
@@ -31,13 +38,23 @@ if _WINDOWS:
     NIF_MESSAGE, NIF_ICON, NIF_TIP = 0x01, 0x02, 0x04
     IDI_APPLICATION = 32512
     IDC_ARROW = 32512
+    IMAGE_ICON = 1
+    LR_LOADFROMFILE = 0x0010
     MF_STRING = 0x0000
     MF_SEPARATOR = 0x0800
     TPM_RIGHTBUTTON = 0x0002
     TPM_RETURNCMD = 0x0100
-    CW_USEDEFAULT = 0x80000000 - 0x100000000  # as signed int
+    CW_USEDEFAULT = 0x80000000 - 0x100000000
     HWND_MESSAGE = -3
-    ID_PANEL, ID_QUIT = 1001, 1002
+    ID_PANEL = 1001
+    ID_QUIT = 1002
+    ID_HIDE = 1003
+    ID_FEED = 1004
+    ID_SOUND = 1005
+    ID_PEEK = 1006
+    ID_UPDATE = 1007
+    ID_FOCUS = 1008
+    ID_DOCK = 1009
 
     LRESULT = ctypes.c_ssize_t
     WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT,
@@ -86,14 +103,19 @@ class Tray:
         self.available = False
         self.show_requested = threading.Event()
         self.quit_requested = threading.Event()
+        self._actions: queue.SimpleQueue[str] = queue.SimpleQueue()
         self._tooltip = tooltip
         self._hwnd = None
+        self._icon = None
+        self._custom_icon = False
         self._thread = None
         self._wndproc = None
         self._ready = threading.Event()
         self._tk_root = None
         self._tk_image = None
         self._tk_menu = None
+        self._tk_focus_index = None
+        self._focus_label = "🍅 Odak Başlat (25 dk)"
         self._on_toggle_hide = None
         if not _WINDOWS:
             return
@@ -110,38 +132,55 @@ class Tray:
             if str(root.tk.call("tk", "systray", "exists")) == "1":
                 root.tk.call("tk", "systray", "destroy")
             img = tk.PhotoImage(width=18, height=18, master=root)
-            # 18x18 kedi silüeti (macOS menü çubuğu için net koyu ikon)
+            # 18x18 Kömür kedi portresi (siyah kulaklı silüet + parlak sarı-yeşil gözler + beyaz göğüs)
             cat_rows = [
                 "..................",
-                "...##........##...",
+                "..##..........##..",
+                "..###........###..",
                 "..####......####..",
-                "..#####....#####..",
-                "..##############..",
                 "..##############..",
                 ".################.",
-                ".###..######..###.",
-                ".###..######..###.",
+                ".################.",
+                ".###YY######YY###.",
+                ".###YY######YY###.",
                 ".################.",
                 ".#######..#######.",
                 "..##############..",
-                "...############...",
-                "....##########....",
-                ".....########.....",
-                "..................",
+                "...###WWWWWW###...",
+                "....##WWWWWW##....",
+                ".....##WWWW##.....",
+                "......######......",
                 "..................",
                 "..................",
             ]
+            palette = {"#": "#141821", "Y": "#e8e348", "W": "#fffaf2"}
             for y, row in enumerate(cat_rows):
                 for x, ch in enumerate(row):
-                    if ch == "#":
-                        img.put("#111111", to=(x, y, x + 1, y + 1))
+                    col = palette.get(ch)
+                    if col:
+                        img.put(col, to=(x, y, x + 1, y + 1))
             self._tk_root = root
             self._tk_image = img
             self._on_toggle_hide = on_toggle_hide
             menu = tk.Menu(root, tearoff=False)
             if callable(on_toggle_hide):
                 menu.add_command(label="Göster / Gizle", command=self._mac_toggle_hide)
-            menu.add_command(label="Kontrol paneli", command=self.show_requested.set)
+            menu.add_command(label="Mama Ver", command=lambda: self._actions.put("feed"))
+            menu.add_command(label="Ses Aç / Kapa", command=lambda: self._actions.put("toggle_sound"))
+            menu.add_command(label=self._focus_label, command=lambda: self._actions.put("toggle_focus"))
+            self._tk_focus_index = menu.index("end")
+            menu.add_separator()
+            menu.add_command(label="Pencereden Bak", command=lambda: self._actions.put("peek"))
+            try:
+                import window_utils
+                if window_utils.mac_notch_rect() is not None:
+                    menu.add_command(label="Çentikten Bak", command=lambda: self._actions.put("notch"))
+            except Exception:
+                pass
+            menu.add_command(label="Dock Üstünde Gez", command=lambda: self._actions.put("dock"))
+            menu.add_separator()
+            menu.add_command(label="Kontrol Paneli", command=self.show_requested.set)
+            menu.add_command(label="Güncellemeleri Denetle", command=lambda: self._actions.put("check_update"))
             menu.add_separator()
             menu.add_command(label="Çıkış", command=self.quit_requested.set)
             self._tk_menu = menu
@@ -164,7 +203,6 @@ class Tray:
                 logging.debug("macOS tray toggle hide failed", exc_info=True)
 
     def _mac_left_click(self):
-        # Gizliyse geri getir, değilse kontrol panelini aç.
         if self._tk_root is not None:
             try:
                 if self._tk_root.wm_state() == "withdrawn" and callable(self._on_toggle_hide):
@@ -202,10 +240,28 @@ class Tray:
         finally:
             self._remove_icon()
 
+    def _load_win_icon(self, u32):
+        """Load custom Kömür .ico if present; fall back cleanly to IDI_APPLICATION."""
+        try:
+            ico = _asset_path("komur.ico")
+            if ico.is_file():
+                u32.LoadImageW.restype = wintypes.HANDLE
+                u32.LoadImageW.argtypes = [
+                    wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                    ctypes.c_int, ctypes.c_int, wintypes.UINT,
+                ]
+                handle = u32.LoadImageW(None, str(ico), IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+                if handle:
+                    self._custom_icon = True
+                    return handle
+        except Exception:
+            logging.debug("Custom Windows tray icon load failed", exc_info=True)
+        app_icon = ctypes.cast(ctypes.c_void_p(IDI_APPLICATION), wintypes.LPCWSTR)
+        return u32.LoadIconW(None, app_icon)
+
     def _setup(self):
         u32 = ctypes.windll.user32
         k32 = ctypes.windll.kernel32
-        # prototypes (pointer-correct on 64-bit)
         k32.GetModuleHandleW.restype = wintypes.HMODULE
         k32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
         u32.LoadIconW.restype = wintypes.HICON
@@ -228,25 +284,22 @@ class Tray:
             wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATA)]
 
         hinst = k32.GetModuleHandleW(None)
-        app_icon = ctypes.cast(ctypes.c_void_p(IDI_APPLICATION), wintypes.LPCWSTR)
         arrow = ctypes.cast(ctypes.c_void_p(IDC_ARROW), wintypes.LPCWSTR)
+        self._icon = self._load_win_icon(u32)
         self._wndproc = WNDPROC(self._on_message)
         cls = WNDCLASS()
         cls.lpfnWndProc = self._wndproc
         cls.hInstance = hinst
         cls.lpszClassName = "KomurTrayWindow"
-        cls.hIcon = u32.LoadIconW(None, app_icon)
+        cls.hIcon = self._icon
         cls.hCursor = u32.LoadCursorW(None, arrow)
-        u32.RegisterClassW(ctypes.byref(cls))  # may already exist; ignore result
-        # a hidden ordinary window (parent=None) is enough to receive the
-        # tray callback messages; we never show it.
+        u32.RegisterClassW(ctypes.byref(cls))
         self._hwnd = u32.CreateWindowExW(
             0, "KomurTrayWindow", "Komur", 0, 0, 0, 0, 0,
             None, None, hinst, None,
         )
         if not self._hwnd:
             raise ctypes.WinError(ctypes.get_last_error())
-        self._icon = u32.LoadIconW(None, app_icon)
         self._add_icon()
 
     def _nid(self, flags):
@@ -272,6 +325,32 @@ class Tray:
             ctypes.windll.shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
         except Exception:
             pass
+        if _WINDOWS and self._custom_icon and self._icon:
+            try:
+                ctypes.windll.user32.DestroyIcon(self._icon)
+            except Exception:
+                pass
+            self._custom_icon = False
+
+    def _dispatch_win_cmd(self, cmd):
+        if cmd == ID_PANEL:
+            self.show_requested.set()
+        elif cmd == ID_QUIT:
+            self.quit_requested.set()
+        elif cmd == ID_HIDE:
+            self._actions.put("toggle_hide")
+        elif cmd == ID_FEED:
+            self._actions.put("feed")
+        elif cmd == ID_SOUND:
+            self._actions.put("toggle_sound")
+        elif cmd == ID_PEEK:
+            self._actions.put("peek")
+        elif cmd == ID_FOCUS:
+            self._actions.put("toggle_focus")
+        elif cmd == ID_DOCK:
+            self._actions.put("dock")
+        elif cmd == ID_UPDATE:
+            self._actions.put("check_update")
 
     def _on_message(self, hwnd, msg, wparam, lparam):
         u32 = ctypes.windll.user32
@@ -283,11 +362,7 @@ class Tray:
                 self._popup_menu()
             return 0
         if msg == WM_COMMAND:
-            cmd = wparam & 0xFFFF
-            if cmd == ID_PANEL:
-                self.show_requested.set()
-            elif cmd == ID_QUIT:
-                self.quit_requested.set()
+            self._dispatch_win_cmd(wparam & 0xFFFF)
             return 0
         if msg == WM_DESTROY:
             u32.PostQuitMessage(0)
@@ -297,7 +372,16 @@ class Tray:
     def _popup_menu(self):
         u32 = ctypes.windll.user32
         menu = u32.CreatePopupMenu()
-        u32.AppendMenuW(menu, MF_STRING, ID_PANEL, "Kontrol paneli")
+        u32.AppendMenuW(menu, MF_STRING, ID_HIDE, "Göster / Gizle")
+        u32.AppendMenuW(menu, MF_STRING, ID_FEED, "Mama Ver")
+        u32.AppendMenuW(menu, MF_STRING, ID_SOUND, "Ses Aç / Kapa")
+        u32.AppendMenuW(menu, MF_STRING, ID_FOCUS, self._focus_label)
+        u32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+        u32.AppendMenuW(menu, MF_STRING, ID_PEEK, "Pencereden Bak")
+        u32.AppendMenuW(menu, MF_STRING, ID_DOCK, "Görev Çubuğuna İn")
+        u32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+        u32.AppendMenuW(menu, MF_STRING, ID_PANEL, "Kontrol Paneli")
+        u32.AppendMenuW(menu, MF_STRING, ID_UPDATE, "Güncellemeleri Denetle")
         u32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         u32.AppendMenuW(menu, MF_STRING, ID_QUIT, "Çıkış")
         pt = wintypes.POINT()
@@ -306,12 +390,9 @@ class Tray:
         cmd = u32.TrackPopupMenu(
             menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, pt.x, pt.y, 0, self._hwnd, None
         )
-        u32.PostMessageW(self._hwnd, 0x0000, 0, 0)  # WM_NULL, classic fix
+        u32.PostMessageW(self._hwnd, 0x0000, 0, 0)
         u32.DestroyMenu(menu)
-        if cmd == ID_PANEL:
-            self.show_requested.set()
-        elif cmd == ID_QUIT:
-            self.quit_requested.set()
+        self._dispatch_win_cmd(cmd)
 
     def _pump(self):
         u32 = ctypes.windll.user32
@@ -332,6 +413,23 @@ class Tray:
             self.quit_requested.clear()
             return True
         return False
+
+    def update_focus_label(self, label: str):
+        """Update the Focus/Pomodoro countdown label shown in the menu bar / tray menu."""
+        if not label or label == self._focus_label:
+            return
+        self._focus_label = label
+        if _MAC and self._tk_menu is not None and self._tk_focus_index is not None:
+            try:
+                self._tk_menu.entryconfigure(self._tk_focus_index, label=label)
+            except Exception:
+                pass
+
+    def poll_action(self) -> str | None:
+        try:
+            return self._actions.get_nowait()
+        except queue.Empty:
+            return None
 
     def close(self):
         if _MAC and self._tk_root is not None:

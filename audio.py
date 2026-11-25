@@ -80,7 +80,7 @@ def play_wav_bytes(data, volume=None, pan_x=None, screen_w=None):
         if volume is not None:
             command += ["-v", f"{max(0.0, min(1.0, float(volume))):.2f}"]
         subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       timeout=60, check=False)
+                       timeout=12, check=False)
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)

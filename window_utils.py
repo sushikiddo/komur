@@ -191,30 +191,93 @@ class _ObjC:
         self._keyable_installed = True
 
     def install_first_click_support(self):
-        """macOS ilk tıklama ve pasif iki parmak sağ tık desteği CoreGraphics olay sayaçlarıyla
-        (``poll_mac_right_clicks``) ana Python döngüsünde işlenir; Tcl/Tk olay döngüsü içinden
-        yeniden Python çağıran ``sendEvent:`` ctypes kancası kullanılmaz (PyEval_RestoreThread
-        çökmesini önler).
+        """macOS ilk tıklama ve odak-çalmayan TKPanel etkileşim desteği:
+
+        Tk 9.1 Aqua'nın ``tkProcessMouseEvent:`` yordamı olay penceresinin ``isKeyWindow`` ve
+        ``[NSApp keyWindow]`` olmasını şart koşar; AppKit de pasif pencerelerde ilk tıklamayı
+        iletmek için ``acceptsFirstMouse:`` sonucuna bakar. Çerçevesiz ``TKPanel`` (``0x80`` =
+        Borderless | NonactivatingPanel) varsayılan olarak ``canBecomeKeyWindow == NO`` döndürür.
+
+        Tk 9.1'in kendi saf yerel (2 komutluk ``mov w0, #1; ret``, sıfır Python/GIL geri çağrısı)
+        ``-[TKContentView wantsUpdateLayer]`` IMP'ini ``TKPanel.canBecomeKeyWindow`` ve
+        ``TKContentView.acceptsFirstMouse:`` üzerine takarak hem tek tık sevme/sürükleme hem de
+        Hızlı Menü düğmelerinin etkin uygulamayı (Chrome vb.) arka plana atmadan çalışmasını sağla.
         """
-        self._first_click_installed = True
+        if self._first_click_installed:
+            return
+        try:
+            cv_cls = self.cls("TKContentView")
+            panel_cls = self.cls("TKPanel")
+            yes_method = (
+                self.lib.class_getInstanceMethod(cv_cls, self.sel("wantsUpdateLayer"))
+                if cv_cls else None
+            )
+            yes_imp = self.lib.method_getImplementation(yes_method) if yes_method else None
+            if yes_imp and panel_cls and cv_cls:
+                self.lib.class_replaceMethod(
+                    panel_cls, self.sel("canBecomeKeyWindow"), yes_imp, b"B@:",
+                )
+                self.lib.class_replaceMethod(
+                    cv_cls, self.sel("acceptsFirstMouse:"), yes_imp, b"B@:@",
+                )
+                self._first_click_installed = True
+        except Exception:
+            pass
 
 
 _objc = None
 _cg_lib = None
 _black_key = None              # paylaşılan CIFilter (bir kez kurulur)
 _keyed_windows = set()          # filtresi takılmış NSWindow işaretçileri
+_NONACTIVATING_PANELS: set[str] = set()   # Tk 9.1 -class nspanel pencere yolları
+_panel_seq = 0
 _right_click_handlers: dict[str, tuple[tk.Misc, object]] = {}
 _last_left_click_was_active: bool = True
 _mac_last_rc: int | None = None
 _mac_last_lc: int | None = None
 _CUBE = 64                     # #0a0d13 gibi koyu renkler ilk hücrenin dışında kalsın diye 64
-_KEYABLE_TITLES = {"Kömür — Hızlı Menü", "Kömür — komut"}
+_KEYABLE_TITLES = {"Kömür — komut"}
 _ELEVATED_TITLES = {"Kömür — Hızlı Menü", "Kömür — komut", "Kömür — konuşma"}
 _NS_FLOATING_LEVEL = 1000      # kCGScreenSaverWindowLevel: tam ekran video ve Spaces üstünde kalır
 _NS_ELEVATED_LEVEL = 1001      # Menü, konuşma ve sohbet balonları her zaman kedilerin üstünde
 # CanJoinAllSpaces | Stationary | IgnoresCycle | FullScreenAuxiliary
 _NS_COLLECTION_ALL_SPACES = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8)
+_NS_NONACTIVATING_PANEL_MASK = 1 << 7   # NSWindowStyleMaskNonactivatingPanel | Borderless
 _NS_DOCMODAL_MASK = 64
+
+
+def create_nonactivating_panel(master, name: str | None = None) -> tk.Toplevel:
+    """macOS Tk 9.1'de yerel odak-çalmayan NSPanel (TKPanel) oluştur; diğer platformlarda Toplevel.
+
+    NSPanel + NonactivatingPanel iki kritik şeyi birden sağlar:
+    1) Kediye veya hızlı menüye tıklamak Chrome/VS Code gibi etkin uygulamayı arka plana atmaz.
+    2) macOS tam ekran video Space'lerinin üstünde kalır.
+    """
+    global _panel_seq
+    if IS_MAC and master is not None:
+        if not name:
+            _panel_seq += 1
+            name = f"komur_panel_{_panel_seq}"
+        parent_w = str(master._w)
+        child_w = f".{name}" if parent_w == "." else f"{parent_w}.{name}"
+        try:
+            master.tk.call("wm", "attributes", child_w, "-class", "nspanel")
+            win = tk.Toplevel(master, name=name)
+            _NONACTIVATING_PANELS.add(str(win._w))
+            return win
+        except tk.TclError:
+            pass
+    return tk.Toplevel(master)
+
+
+def is_nonactivating_panel(window) -> bool:
+    """Pencere macOS Tk 9.1 NonactivatingPanel (TKPanel) olarak mı oluşturuldu?"""
+    if not IS_MAC or window is None:
+        return False
+    try:
+        return str(window._w) in _NONACTIVATING_PANELS
+    except AttributeError:
+        return False
 
 
 def _objc_runtime():
@@ -285,16 +348,25 @@ def _mac_prune_keyed_windows():
 
 
 def _is_tk_nswindow(o, window) -> bool:
-    """NSStatusBarWindow / sistem pencerelerini atla; yalnız Tk pencerelerini işle."""
+    """NSStatusBarWindow / sistem pencerelerini atla; yalnız Tk pencerelerini (TKWindow/TKPanel) işle."""
     try:
         name = o.lib.object_getClassName(window) or b""
-        return b"TKWindow" in name
+        return b"TKWindow" in name or b"TKPanel" in name
+    except Exception:
+        return False
+
+
+def _is_tk_nspanel(o, window) -> bool:
+    """Pencere Tk 9.1 NSPanel alt sınıfı (TKPanel) mı?"""
+    try:
+        name = o.lib.object_getClassName(window) or b""
+        return b"TKPanel" in name
     except Exception:
         return False
 
 
 def _mac_apply_window_chrome(order_front=False):
-    """Opak olmayan pencerelerin seviye, gölge, zemin, Spaces ve odak özelliklerini anında uygula."""
+    """Opak olmayan pencerelerin seviye, gölge, zemin, Spaces ve odak-çalmayan panel özelliklerini uygula."""
     try:
         o = _objc_runtime()
         o.install_first_click_support()
@@ -307,17 +379,31 @@ def _mac_apply_window_chrome(order_front=False):
             title = o.to_str(o.send(window, o.sel("title")))
             o.send_bool(window, o.sel("setHasShadow:"), False)
             o.send_bool(window, o.sel("setHidesOnDeactivate:"), False)
+            o.send_bool(window, o.sel("setCanHide:"), False)
             o.send_obj(window, o.sel("setBackgroundColor:"), clear)
-            style = o.get_ulong(window, o.sel("styleMask"))
-            if style & _NS_DOCMODAL_MASK:
-                o.send_ulong(window, o.sel("setStyleMask:"), style & ~_NS_DOCMODAL_MASK)
+            if _is_tk_nspanel(o, window):
+                if o.get_ulong(window, o.sel("styleMask")) != _NS_NONACTIVATING_PANEL_MASK:
+                    o.send_ulong(window, o.sel("setStyleMask:"), _NS_NONACTIVATING_PANEL_MASK)
+                    _keyed_windows.discard(window)
+                o.send_bool(window, o.sel("setFloatingPanel:"), True)
+                # NonactivatingPanel (0x80) uygulamayı etkinleştirmeden keyWindow olabilir;
+                # Tk 9.1 tkProcessMouseEvent: tıklama teslimi için isKeyWindow == YES şart koşar.
+                o.send_bool(window, o.sel("setBecomesKeyOnlyIfNeeded:"), False)
+                o.send_bool(window, o.sel("setWorksWhenModal:"), True)
+            else:
+                style = o.get_ulong(window, o.sel("styleMask"))
+                if style & _NS_DOCMODAL_MASK:
+                    o.send_ulong(window, o.sel("setStyleMask:"), style & ~_NS_DOCMODAL_MASK)
             target_level = _NS_ELEVATED_LEVEL if title in _ELEVATED_TITLES else _NS_FLOATING_LEVEL
             if o.get_long(window, o.sel("level")) != target_level:
                 o.send_long(window, o.sel("setLevel:"), target_level)
-            o.send_ulong(window, o.sel("setCollectionBehavior:"), _NS_COLLECTION_ALL_SPACES)
+            if o.get_ulong(window, o.sel("collectionBehavior")) != _NS_COLLECTION_ALL_SPACES:
+                o.send_ulong(window, o.sel("setCollectionBehavior:"), _NS_COLLECTION_ALL_SPACES)
             if title in _KEYABLE_TITLES:
                 o.make_keyable(window)
-            if order_front and o.get_bool(window, o.sel("isVisible")):
+            on_active = o.get_bool(window, o.sel("isOnActiveSpace"))
+            if (order_front or not on_active) and o.get_bool(window, o.sel("isVisible")):
+                o.send_long(window, o.sel("setLevel:"), target_level)
                 o.send_void(window, o.sel("orderFrontRegardless"))
     except (OSError, AttributeError, TypeError, ValueError):
         pass
@@ -375,10 +461,161 @@ def ensure_floating(window, *, keyable=False, elevated=False):
         pass
     if IS_MAC:
         _mac_apply_window_chrome(order_front=True)
+        _mac_key_out_black()
         try:
             window.after(50, _mac_key_out_black)
         except tk.TclError:
             pass
+
+
+def ensure_topmost_now(window=None):
+    """Pencereyi tam ekran video/uygulama üstünde tutmak için anında en öne al."""
+    if IS_MAC:
+        _mac_apply_window_chrome(order_front=True)
+        return
+    if IS_WINDOWS and window is not None:
+        try:
+            user32 = ctypes.windll.user32
+            user32.GetParent.argtypes = [wintypes.HWND]
+            user32.GetParent.restype = wintypes.HWND
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int, wintypes.UINT,
+            ]
+            hwnd = user32.GetParent(window.winfo_id())
+            if hwnd:
+                # HWND_TOPMOST = -1; SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE = 0x13
+                user32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x0013)
+        except (AttributeError, OSError, tk.TclError):
+            pass
+
+
+def mac_windows_on_active_space() -> bool:
+    """macOS: görünür Kömür pencerelerinin tümü aktif Space (tam ekran dahil) üstünde mi?"""
+    if not IS_MAC:
+        return True
+    try:
+        o = _objc_runtime()
+        app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+        for window in o.items(o.send(app, o.sel("windows"))):
+            if not _is_tk_nswindow(o, window) or o.get_bool(window, o.sel("isOpaque")):
+                continue
+            if o.get_bool(window, o.sel("isVisible")) and not o.get_bool(window, o.sel("isOnActiveSpace")):
+                return False
+        return True
+    except (OSError, AttributeError, TypeError, ValueError):
+        return True
+
+
+def mac_notch_rect():
+    """macOS çentikli MacBook ekranında çentik kutusu (left, top, right, bottom) veya None."""
+    if not IS_MAC:
+        return None
+    try:
+        o = _objc_runtime()
+        screens = o.items(o.send(o.cls("NSScreen"), o.sel("screens")))
+        if not screens:
+            return None
+        primary_h = o.send_rect(screens[0], o.sel("frame")).size.height
+        sel_aux_l = o.sel("auxiliaryTopLeftArea")
+        sel_aux_r = o.sel("auxiliaryTopRightArea")
+        sel_resp = o.sel("respondsToSelector:")
+        for scr in screens:
+            if not o.send_obj(scr, sel_resp, sel_aux_l):
+                continue
+            left_area = o.send_rect(scr, sel_aux_l)
+            right_area = o.send_rect(scr, sel_aux_r)
+            if left_area.size.width <= 0 or right_area.size.width <= 0:
+                continue
+            notch_left = round(left_area.origin.x + left_area.size.width)
+            notch_right = round(right_area.origin.x)
+            notch_h = round(max(left_area.size.height, right_area.size.height))
+            if notch_right - notch_left >= 60 and notch_h >= 16:
+                f = o.send_rect(scr, o.sel("frame"))
+                top = round(primary_h - (f.origin.y + f.size.height))
+                return (notch_left, top, notch_right, top + notch_h)
+        return None
+    except (OSError, AttributeError, TypeError, ValueError):
+        return None
+
+
+def _mac_find_nswindow(window):
+    """Tk penceresine karşılık gelen NSWindow işaretçisini başlıkla bul (yoksa None)."""
+    if not IS_MAC or window is None:
+        return None
+    try:
+        title = window.wm_title()
+        if not title:
+            return None
+        o = _objc_runtime()
+        app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
+        for nswin in o.items(o.send(app, o.sel("windows"))):
+            if _is_tk_nswindow(o, nswin) and o.to_str(o.send(nswin, o.sel("title"))) == title:
+                return nswin
+    except (OSError, AttributeError, TypeError, ValueError, tk.TclError):
+        pass
+    return None
+
+
+def mac_prepare_hidden_panel(window, width: int = 120, height: int = 120) -> bool:
+    """macOS TKPanel'i açılışta ekran dışında eşleyip orderOut: ile gizle; sonraki gösterimlerde
+    ``deiconify()`` gerekmez, böylece etkin uygulama (Chrome vb.) asla arka plana atılmaz."""
+    if not is_nonactivating_panel(window):
+        return False
+    try:
+        place_window(window, -3200, -3200, max(16, int(width)), max(16, int(height)))
+        window.deiconify()
+        window.update_idletasks()
+        _mac_apply_window_chrome()
+        nswin = _mac_find_nswindow(window)
+        if nswin:
+            o = _objc_runtime()
+            o.send_obj(nswin, o.sel("orderOut:"), None)
+            return True
+        window.withdraw()
+    except (OSError, AttributeError, TypeError, ValueError, tk.TclError):
+        pass
+    return False
+
+
+def mac_hide_nonactivating_panel(window) -> bool:
+    """macOS TKPanel'i ``withdraw()`` yerine ``orderOut:`` ile gizle (sonraki gösterimde odak çalmaz)."""
+    if not is_nonactivating_panel(window):
+        return False
+    nswin = _mac_find_nswindow(window)
+    if not nswin:
+        return False
+    try:
+        o = _objc_runtime()
+        o.send_obj(nswin, o.sel("orderOut:"), None)
+        return True
+    except (OSError, AttributeError, TypeError, ValueError):
+        return False
+
+
+def mac_present_nonactivating_panel(window, *, make_key: bool = True, elevated: bool = True):
+    """macOS'ta odak-çalmayan TKPanel'i (Hızlı Menü / konuşma balonu) etkin uygulamayı
+    arka plana atmadan göster; ``make_key=True`` ise Tk düğme tıklamaları için keyWindow yap."""
+    if not IS_MAC or window is None:
+        return
+    try:
+        title = window.wm_title()
+        if title and elevated:
+            _ELEVATED_TITLES.add(title)
+        if window.wm_state() == "withdrawn":
+            window.deiconify()
+        _mac_key_out_black()
+        nswin = _mac_find_nswindow(window)
+        if nswin:
+            o = _objc_runtime()
+            level = _NS_ELEVATED_LEVEL if elevated else _NS_FLOATING_LEVEL
+            o.send_long(nswin, o.sel("setLevel:"), level)
+            if make_key:
+                o.send_obj(nswin, o.sel("makeKeyAndOrderFront:"), None)
+            else:
+                o.send_void(nswin, o.sel("orderFrontRegardless"))
+    except (OSError, AttributeError, TypeError, ValueError, tk.TclError):
+        pass
 
 
 def mac_present_key_window(window):
@@ -500,6 +737,15 @@ def mac_control_key_down() -> bool:
         return False
 
 
+def consume_mac_click_counters() -> None:
+    """Tk olayı zaten işlediyse CoreGraphics tık sayaçlarını eşitle (çift tetiklemeyi önle)."""
+    global _mac_last_rc, _mac_last_lc
+    if not IS_MAC:
+        return
+    _mac_last_rc = mac_right_click_counter()
+    _mac_last_lc = mac_left_click_counter()
+
+
 def mac_activate_app() -> None:
     """macOS'ta Kömür uygulamasını güvenli biçimde (ana Python iş parçacığından) etkinleştir."""
     if not IS_MAC:
@@ -555,7 +801,8 @@ def poll_mac_right_clicks(pointer_xy) -> bool:
         px, py = pointer_xy
         for tk_win, cb in list(_right_click_handlers.values()):
             if _point_in_window(tk_win, px, py):
-                mac_activate_app()
+                if not is_nonactivating_panel(tk_win):
+                    mac_activate_app()
                 try:
                     cb(int(round(px)), int(round(py)))
                 except Exception:
@@ -563,14 +810,15 @@ def poll_mac_right_clicks(pointer_xy) -> bool:
                 return True
         return False
 
-    # Normal sol tık: uygulama pasifken kedi üstüne tıklandıysa "sev" tetiklemeden etkinleştir.
+    # Normal sol tık: NonactivatingPanel ise etkin uygulamayı (Chrome vb.) asla arka plana atma!
     was_active = mac_app_is_active()
     _set_last_left_click_was_active(was_active)
     if not was_active and pointer_xy is not None:
         px, py = pointer_xy
         for tk_win, _cb in list(_right_click_handlers.values()):
             if _point_in_window(tk_win, px, py):
-                mac_activate_app()
+                if not is_nonactivating_panel(tk_win):
+                    mac_activate_app()
                 break
     return False
 
@@ -654,6 +902,24 @@ def pointer_position(root):
     return root.winfo_pointerxy()
 
 
+def _win_apply_noactivate(window):
+    """Windows: kedi/balon pencerelerine WS_EX_NOACTIVATE ekleyerek odak çalmayı önle."""
+    if not IS_WINDOWS:
+        return
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetParent(window.winfo_id()) or window.winfo_id()
+        if not hwnd:
+            return
+        gwl_exstyle = -20
+        ws_ex_noactivate = 0x08000000
+        style = user32.GetWindowLongW(hwnd, gwl_exstyle)
+        if not (style & ws_ex_noactivate):
+            user32.SetWindowLongW(hwnd, gwl_exstyle, style | ws_ex_noactivate)
+    except (AttributeError, OSError, tk.TclError):
+        pass
+
+
 def make_transparent(window, *, keyable=False, elevated=False):
     """Apply the borderless, topmost, color-keyed transparency to a window."""
     if IS_MAC:
@@ -677,6 +943,8 @@ def make_transparent(window, *, keyable=False, elevated=False):
     window.overrideredirect(True)
     window.attributes("-topmost", True)
     apply_color_key(window, BG)
+    if IS_WINDOWS and not keyable:
+        window.bind("<Map>", lambda _e, w=window: _win_apply_noactivate(w), add="+")
     if show_again:
         window.deiconify()
         ensure_floating(window, keyable=keyable, elevated=elevated)
@@ -798,7 +1066,8 @@ def _mac_cg_windows():
             sel_int = o.sel("intValue")
             for item in o.items(arr):
                 layer_obj = o.send_obj(item, sel_key, k_layer)
-                if not layer_obj or o.get_int(layer_obj, sel_int) != 0:
+                layer = o.get_int(layer_obj, sel_int) if layer_obj else -1
+                if layer < 0 or layer > 25:
                     continue
                 pid_obj = o.send_obj(item, sel_key, k_pid)
                 pid = o.get_int(pid_obj, sel_int) if pid_obj else 0
@@ -814,6 +1083,9 @@ def _mac_cg_windows():
                 if not cg.CGRectMakeWithDictionaryRepresentation(bounds_obj, ctypes.byref(rect)):
                     continue
                 if rect.size.width < 80 or rect.size.height < 40:
+                    continue
+                # Yalnız normal pencereler (layer 0) veya ekranı kaplayan tam ekran video katmanları
+                if layer != 0 and (rect.size.width < 800 or rect.size.height < 480):
                     continue
                 wid_obj = o.send_obj(item, sel_key, k_num)
                 wid = o.get_int(wid_obj, sel_int) if wid_obj else 0

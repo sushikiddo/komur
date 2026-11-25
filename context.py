@@ -225,16 +225,16 @@ def _is_fullscreen(hwnd=None) -> bool:
                     sb = round(st + f.size.height)
                     vis_top = round(primary_h - (vis.origin.y + vis.size.height))
                     vis_bottom = round(primary_h - vis.origin.y)
-                    full_width = l <= sl + 2 and r >= sr - 2
-                    covers_full = full_width and t <= st + 2 and b >= sb - 2
+                    full_width = l <= sl + 4 and r >= sr - 4
+                    covers_full = full_width and t <= st + 4 and b >= sb - 4
                     # Çentikli MacBook'ta native tam ekran penceresi çentiğin hemen altında (vis_top) başlar
-                    # ve Dock alanını (sb) tamamen kaplar.
+                    # ve ekranın altına kadar (Dock dahil) uzanır.
                     covers_below_notch = (
                         full_width
-                        and b >= sb - 2
+                        and b >= sb - 4
                         and vis_top > st
-                        and t <= vis_top + 2
-                        and (sb - vis_bottom >= 8)
+                        and t <= vis_top + 4
+                        and (sb - vis_bottom >= 8 or t <= st + 4)
                     )
                     if covers_full or covers_below_notch:
                         return True

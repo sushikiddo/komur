@@ -1,5 +1,5 @@
 #define AppName "Kömür"
-#define AppVersion "2.3.0"
+#define AppVersion "2.4.0"
 #define AppPublisher "Kömür"
 
 [Setup]
@@ -7,6 +7,7 @@ AppId={{75B09D94-55C4-4E19-A912-67A92498C094}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
+SetupIconFile=..\assets\komur.ico
 DefaultDirName={localappdata}\Programs\Komur
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes

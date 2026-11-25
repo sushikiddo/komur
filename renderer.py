@@ -105,6 +105,7 @@ class CatRenderer:
     _walk_sample = None
     use_procedural_springs = True
     retro_enabled = False
+    low_power = False
     tail_spring = None
     ear_spring = None
     gaze_controller = None
@@ -181,10 +182,10 @@ class CatRenderer:
         )
         # Soft, plush velvety mid-tone & subtle sheen (NEVER harsh gray patches on black fur!)
         self._fur_mid = _no_black_key(
-            blend(self.FUR, self.FUR_LIGHT, 0.16 if dark_fur else 0.24)
+            blend(self.FUR, self.FUR_LIGHT, 0.11 if dark_fur else 0.22)
         )
         self._fur_sheen = _no_black_key(
-            blend(self.FUR, self.FUR_LIGHT, 0.28) if dark_fur else blend(self.FUR_LIGHT, self.WHITE, 0.16)
+            blend(self.FUR, self.FUR_LIGHT, 0.22) if dark_fur else blend(self.FUR_LIGHT, self.WHITE, 0.16)
         )
         self._muzzle_puff = _no_black_key(
             blend(self.FUR, self.FUR_LIGHT, 0.12) if dark_fur else blend(self.FUR, self.FUR_EDGE, 0.12)
@@ -237,17 +238,23 @@ class CatRenderer:
         self._white_rim = blend(self.WHITE_SHADE, self._coat, 0.10 if dark_fur else 0.08)
         self._eye_rim = _no_black_key(blend(self.INK, self.FUR, 0.12))
         # Luminous chartreuse-gold gaze for default komur skin; preserve exact skin eye colors for all other skins!
-        if self.GOLD.lower() == "#f8cd35" and self.GOLD_DARK.lower() == "#c98720":
-            self._iris_main = "#e6e145"
-            self._iris_dark = "#a7ad24"
-            self._iris_light = blend(self.GOLD_LIGHT, "#f8f694", 0.65)
+        if self.GOLD.lower() in ("#f8cd35", "#e6e145") and self.GOLD_DARK.lower() in ("#c98720", "#a7ad24"):
+            self._iris_main = "#e8e348"
+            self._iris_dark = "#9ba320"
+            self._iris_light = "#faf89e"
+            self._iris_top_shade = "#737b16"
         else:
             self._iris_main = self.GOLD
             self._iris_dark = self.GOLD_DARK
             self._iris_light = self.GOLD_LIGHT
-        self._iris_limbal = _no_black_key(blend(self._iris_dark, self.INK, 0.40))
-        self._iris_glow = blend(self._iris_main, self._iris_light, 0.64)
+            self._iris_top_shade = _no_black_key(blend(self.GOLD_DARK, self.INK, 0.28))
+        self._iris_limbal = _no_black_key(blend(self._iris_dark, self.INK, 0.44))
+        self._iris_glow = blend(self._iris_main, self._iris_light, 0.68)
         self._pupil_col = _no_black_key(self.INK)
+        self._brow_whisker = (
+            _no_black_key(blend(self.FUR_LIGHT, self.WHITE, 0.16)) if dark_fur
+            else blend(self.WHITE_SHADE, self.FUR_EDGE, 0.35)
+        )
 
     # -- coordinate helpers -------------------------------------------------
     def _xy(self, x, y):
@@ -295,6 +302,8 @@ class CatRenderer:
         else:
             coords = self._coords(points)
         self.item_count += 1
+        if smooth and "splinesteps" not in kw and hasattr(self.canvas, "tk"):
+            kw["splinesteps"] = 14 if self.low_power else 24
         return self.canvas.create_polygon(
             *coords, fill=fill, outline=outline, width=self._w(width),
             smooth=smooth, joinstyle="round", tags=self.TAG, **kw,
@@ -306,9 +315,10 @@ class CatRenderer:
         else:
             coords = self._coords(points)
         self.item_count += 1
+        kw = {"splinesteps": 12 if self.low_power else 20} if (smooth and hasattr(self.canvas, "tk")) else {}
         return self.canvas.create_line(
             *coords, fill=color, width=self._w(width), smooth=smooth,
-            capstyle="round", joinstyle="round", tags=self.TAG,
+            capstyle="round", joinstyle="round", tags=self.TAG, **kw,
         )
 
     def _text(self, x, y, string, **kwargs):
@@ -385,9 +395,10 @@ class CatRenderer:
         )
 
     # -- fur primitives -----------------------------------------------------
-    def _fur_mass(self, pts, cx, cy, inner=0.88, lift=3.2, highlight=None, outline_w=0.65):
+    def _fur_mass(self, pts, cx, cy, inner=0.88, lift=3.2, highlight=None, outline_w=0.0):
         """Plush velvety feline coat volume with silky organic shading & zero harsh outlines."""
-        self._poly(pts, self._coat_shadow, self._outline, outline_w, smooth=True)
+        outline_col = self._outline if outline_w > 0.0 else ""
+        self._poly(pts, self._coat_shadow, outline_col, max(0.5, outline_w), smooth=True)
         # Main plush velvety coat shifted gently toward overhead light (leaving cozy belly shadow)
         self._poly(self._scaled(pts, cx, cy, 0.96, 0.0, -1.2), self._coat, "", 1, smooth=True)
         # Ultra-soft upper-form velvety volume glow
@@ -442,7 +453,7 @@ class CatRenderer:
                 self.WHITE_SHADE, 0.9,
             )
 
-    def _tail(self, pts, widths, outline_w=0.65, puffed=False, use_springs=None):
+    def _tail(self, pts, widths, outline_w=0.0, puffed=False, use_springs=None):
         """Thick, plush, fluffy tapered tail with soft rounded tip & subtle velvet sheen."""
         if use_springs is None:
             use_springs = getattr(self, "_frame_use_springs", getattr(self, "use_procedural_springs", True))
@@ -472,7 +483,8 @@ class CatRenderer:
             pts = blended
         # Ensure real Kömür's lush plush tail fullness (generous rounded fluffy tip)
         plush_w = [max(7.2, w * (1.16 if not puffed else 1.05)) for w in widths]
-        self._tapered(pts, plush_w, self._coat_shadow, self._outline, outline_w, round_start=True)
+        outline_col = self._outline if outline_w > 0.0 else ""
+        self._tapered(pts, plush_w, self._coat_shadow, outline_col, max(0.5, outline_w), round_start=True)
         inner_w = [w * 0.84 for w in plush_w]
         self._tapered([(x, y - 0.8) for x, y in pts], inner_w, self._coat, "", 1, round_start=True)
         if len(pts) >= 3 and self.scale >= 0.55:
@@ -583,7 +595,7 @@ class CatRenderer:
 
     # -- head ---------------------------------------------------------------
     def _head_ears(self, shape, t, ears, twitch, profile=0.0):
-        """Plush pointed feline ears with velvety dark interior & wispy silver-white inner ear hairs."""
+        """Plush wide-set pointed feline ears matching real Kömür with feathery silver-white inner tufts."""
         music_active = getattr(self, "_reaction", "none") == "music"
         p = max(0.0, min(1.0, float(profile)))
         # Draw far ear first when in 3/4 profile (s=+1 is far/front-side, s=-1 is near/back-side)
@@ -594,30 +606,30 @@ class CatRenderer:
                 period = 6.8 if s < 0 else 8.7
                 phase = (t + (0.0 if s < 0 else 2.3)) % period
                 if phase < 0.28:
-                    tw = math.sin(phase / 0.28 * math.pi * 2) * 3.2
+                    tw = math.sin(phase / 0.28 * math.pi * 2) * 3.4
             if music_active:
                 beat = math.sin(t * 4.4 + (0.0 if s < 0 else 0.7))
-                tw += beat * 2.2
+                tw += beat * 2.4
 
             if ears == "flat":
-                tip = (s * 58, -20)
-                outer = (s * 40, -5)
+                tip = (s * 62, -20)
+                outer = (s * 43, -4)
             elif ears == "back":
-                tip = (s * 52 + tw, -44)
-                outer = (s * 40, -8)
+                tip = (s * 56 + tw, -46)
+                outer = (s * 43, -7)
             elif ears == "droop":
-                tip = (s * 46 + tw, -49)
-                outer = (s * 39, -8)
+                tip = (s * 50 + tw, -52)
+                outer = (s * 42, -7)
             elif ears == "relaxed":
-                tip = (s * 42 + tw * s, -59)
-                outer = (s * 40, -10)
+                tip = (s * 46 + tw * s, -62)
+                outer = (s * 43, -9)
             elif ears == "forward":
-                tip = (s * 34 + tw * s, -66)
-                outer = (s * 39, -11)
+                tip = (s * 39 + tw * s, -70)
+                outer = (s * 42, -10)
             else:
-                # Real Kömür: adorable pointed plush ears angled gracefully outward (broader base, natural height)
-                tip = (s * 41 + tw * s, -64)
-                outer = (s * 40, -10)
+                # Real Kömür: expressive wide-set plush ears angled gracefully outward
+                tip = (s * 46 + tw * s, -67)
+                outer = (s * 43, -8)
 
             if self._ear_override is not None:
                 angle_attr = "left_angle" if s < 0 else "right_angle"
@@ -632,171 +644,201 @@ class CatRenderer:
                         tip[1] + layback * 7.5,
                     )
 
-            inner_base = (s * 12.0, -30)
+            inner_base = (s * 13.0, -30)
             far_ear = p > 0.15 and s > 0
             if p > 0.0:
                 if s > 0:
-                    # Far ear (front-top of 3/4 skull, tucked behind crown in depth)
-                    inner_base = (inner_base[0] - p * 4.0, inner_base[1] + p * 1.5)
-                    outer = (outer[0] - p * 14.0, outer[1] - p * 3.0)
-                    tip = (tip[0] - p * 18.0, tip[1] + p * 6.5)
+                    # Far ear (front-top of 3/4 skull, tucked gently behind crown)
+                    inner_base = (inner_base[0] - p * 4.5, inner_base[1] + p * 1.5)
+                    outer = (outer[0] - p * 16.0, outer[1] - p * 3.0)
+                    tip = (tip[0] - p * 21.0, tip[1] + p * 6.0)
                 else:
-                    # Near ear (closer to viewer on left-top of skull)
+                    # Near ear (closer to viewer on back-top of skull)
                     inner_base = (inner_base[0] + p * 4.5, inner_base[1] + p * 1.0)
-                    outer = (outer[0] + p * 6.5, outer[1] + p * 2.0)
-                    tip = (tip[0] + p * 8.0, tip[1] + p * 3.0)
+                    outer = (outer[0] + p * 7.0, outer[1] + p * 2.0)
+                    tip = (tip[0] + p * 9.0, tip[1] + p * 3.0)
 
             inner_mid = (
-                inner_base[0] + (tip[0] - inner_base[0]) * 0.50 - s * 1.0,
+                inner_base[0] + (tip[0] - inner_base[0]) * 0.52 - s * 1.2,
                 inner_base[1] + (tip[1] - inner_base[1]) * 0.50,
             )
-            tip_a = (tip[0] - s * 2.2, tip[1] + 2.4)
-            tip_b = (tip[0] + s * 2.0, tip[1] + 3.6)
-            outer_upper = ((tip[0] + outer[0]) * 0.5 + s * 4.2, (tip[1] + outer[1]) * 0.5 - 1.6)
-            tragus_in = (outer[0] - s * 2.0, outer[1] - 5.2)
-            tragus_out = (outer[0] + s * 1.0, outer[1] - 2.8)
+            tip_a = (tip[0] - s * 2.4, tip[1] + 2.6)
+            tip_b = (tip[0] + s * 2.2, tip[1] + 3.8)
+            outer_upper = ((tip[0] + outer[0]) * 0.5 + s * 4.8, (tip[1] + outer[1]) * 0.5 - 1.5)
+            tragus_in = (outer[0] - s * 2.2, outer[1] - 5.8)
+            tragus_out = (outer[0] + s * 1.4, outer[1] - 2.6)
             ear_poly = [inner_base, inner_mid, tip_a, tip, tip_b, outer_upper, tragus_in, tragus_out, outer]
             ear_col = self._far_fur if far_ear else self._coat_shadow
-            self._poly(shape(ear_poly), ear_col, self._outline, 0.65, smooth=True)
+            self._poly(shape(ear_poly), ear_col, "", 1, smooth=True)
             if not far_ear:
                 self._poly(
-                    shape(self._scaled(ear_poly, (inner_base[0] + outer[0]) * 0.5, (tip[1] + outer[1]) * 0.5, 0.91)),
+                    shape(self._scaled(ear_poly, (inner_base[0] + outer[0]) * 0.5, (tip[1] + outer[1]) * 0.5, 0.92)),
                     self._coat, "", 1, smooth=True,
                 )
 
-            # Deep velvety inner ear cavity + delicate feathery silver-gray tuft ONLY at lower-inner opening!
-            gx = inner_base[0] * 0.36 + tip[0] * 0.32 + outer[0] * 0.32
-            gy = inner_base[1] * 0.36 + tip[1] * 0.32 + outer[1] * 0.32
+            # Deep velvety inner ear cavity
+            gx = inner_base[0] * 0.35 + tip[0] * 0.32 + outer[0] * 0.33
+            gy = inner_base[1] * 0.35 + tip[1] * 0.32 + outer[1] * 0.33
             concha = [
-                (gx + (px - gx) * 0.64, gy + (py - gy) * 0.64 + 1.0)
+                (gx + (px - gx) * 0.64, gy + (py - gy) * 0.64 + 1.2)
                 for px, py in (inner_base, tip, outer)
             ]
             self._poly(shape(concha), self._ear_depth, "", 1, smooth=True)
             inner_soft = [
-                (gx + (px - gx) * 0.42 + s * 0.5, gy + (py - gy) * 0.42 + 2.2)
+                (gx + (px - gx) * 0.44 + s * 0.5, gy + (py - gy) * 0.44 + 2.4)
                 for px, py in (inner_base, tip, outer)
             ]
             self._poly(shape(inner_soft), self._ear_inner, "", 1, smooth=True)
 
-            # Delicate feathery silver-white inner ear tufts nestled along lower-inner edge (NO zebra bars!)
-            if self.scale >= 0.45 and not far_ear:
-                tuft_col = self._ear_tuft
-                for frac, span, lift_y in ((0.14, 0.34, -1.5), (0.25, 0.42, -2.5), (0.36, 0.32, -3.2)):
-                    b_x = inner_base[0] + (tip[0] - inner_base[0]) * frac + s * 1.4
-                    b_y = inner_base[1] + (tip[1] - inner_base[1]) * frac + 2.2
-                    t_x = b_x + (outer[0] - inner_base[0]) * span
-                    t_y = b_y + (outer[1] - inner_base[1]) * (span * 0.35) + lift_y
-                    m_x = (b_x + t_x) * 0.5
-                    m_y = (b_y + t_y) * 0.5 - 1.2
-                    self._line(shape([(b_x, b_y), (m_x, m_y), (t_x, t_y)]), tuft_col, 0.72)
+            # Soft feathery silver-white inner ear fluff nestled gently inside ear opening (real Kömür!)
+            if self.scale >= 0.42 and not far_ear:
+                tuft_soft = blend(self._ear_tuft, self._ear_inner, 0.38)
+                b0 = (
+                    inner_base[0] + (tip[0] - inner_base[0]) * 0.12 + s * 1.0,
+                    inner_base[1] + (tip[1] - inner_base[1]) * 0.12 + 2.5,
+                )
+                b1 = (
+                    inner_base[0] + (tip[0] - inner_base[0]) * 0.42 + s * 1.4,
+                    inner_base[1] + (tip[1] - inner_base[1]) * 0.42 + 1.8,
+                )
+                mid_f = (
+                    b0[0] + (outer[0] - inner_base[0]) * 0.36,
+                    b0[1] + (outer[1] - inner_base[1]) * 0.18 - 4.5,
+                )
+                tip_f = (
+                    b0[0] + (outer[0] - inner_base[0]) * 0.46,
+                    b0[1] + (outer[1] - inner_base[1]) * 0.28 - 0.5,
+                )
+                self._poly(shape([b0, b1, mid_f, tip_f]), tuft_soft, "", 1, smooth=True)
+                # Two wispy soft hairs extending just past the fluff tuft
+                self._line(
+                    shape([
+                        (b0[0] + s * 1.0, b0[1] - 1.5),
+                        (mid_f[0] + s * 1.5, mid_f[1] + 1.5),
+                        (tip_f[0] + s * 2.0, tip_f[1] - 1.5),
+                    ]),
+                    self._ear_tuft, 0.72,
+                )
 
     def _head_eyes(self, shape, tf, eyes, pupil, gaze, lid, profile=0.0):
-        """Big, round, soulful luminous chartreuse-gold eyes with twin catchlight sparkles."""
+        """Big, round, adorable soulful luminous chartreuse-gold eyes with glossy boba pupils & twin sparkles."""
         p_norm = max(0.0, min(1.0, pupil))
         lid = max(0.0, min(1.0, float(lid)))
         p = max(0.0, min(1.0, float(profile)))
 
         for s in (-1, 1):
             if p <= 0.01:
-                ex, ey = s * 17.4, -3.5
-                rx, ry = 12.6, 11.4
+                # Big adorable slightly wide-set round Kömür eyes (matching photo!)
+                ex, ey = s * 18.6, -2.2
+                rx, ry = 14.6, 13.8
                 far_eye = False
             else:
                 if s < 0:
-                    # Near eye (big, round, luminous gaze)
-                    ex = -17.0 + p * 19.8
-                    ey = -3.5 + p * 0.5
-                    rx, ry = 12.2, 11.0
+                    # Near eye: big, luminous, alert forward gaze
+                    ex = -17.8 + p * 20.4
+                    ey = -2.4 + p * 0.4
+                    rx, ry = 13.8, 13.0
                     far_eye = False
                 else:
-                    # Far eye (gently foreshortened near the front contour of the 3/4 cheek)
-                    ex = 17.0 + p * 10.6
-                    ey = -3.5 + p * 0.3
-                    rx = 12.2 * (1.0 - p * 0.24)
-                    ry = 11.0 * (1.0 - p * 0.06)
+                    # Far eye: gently foreshortened along 3/4 cheek curve
+                    ex = 17.8 + p * 11.2
+                    ey = -2.4 + p * 0.2
+                    rx = 13.8 * (1.0 - p * 0.28)
+                    ry = 13.0 * (1.0 - p * 0.06)
                     far_eye = True
 
-            # Big, soulful, gently round feline eye (matches real Kömür's huge round yellow-green eyes!)
+            # Adorable round-almond real-Kömür eye contour
             eye_pts = [
-                (ex - s * rx * 0.96, ey + ry * 0.16),
-                (ex - s * rx * 0.66, ey - ry * 0.72),
-                (ex + s * rx * 0.06, ey - ry * 0.98),
-                (ex + s * rx * 0.74, ey - ry * 0.72),
-                (ex + s * rx * 0.98, ey - ry * 0.08),
-                (ex + s * rx * 0.76, ey + ry * 0.68),
-                (ex + s * rx * 0.04, ey + ry * 0.96),
-                (ex - s * rx * 0.66, ey + ry * 0.74),
+                (ex - s * rx * 0.96, ey + ry * 0.14),
+                (ex - s * rx * 0.68, ey - ry * 0.72),
+                (ex + s * rx * 0.04, ey - ry * 0.99),
+                (ex + s * rx * 0.72, ey - ry * 0.74),
+                (ex + s * rx * 0.98, ey - ry * 0.06),
+                (ex + s * rx * 0.76, ey + ry * 0.70),
+                (ex + s * rx * 0.02, ey + ry * 0.98),
+                (ex - s * rx * 0.68, ey + ry * 0.74),
             ]
 
             if eyes == "closed" or lid >= 0.94:
                 self._line(
                     shape([
-                        (ex - s * rx * 0.85, ey + 1.8),
-                        (ex, ey + 4.4),
-                        (ex + s * rx * 0.85, ey + 0.6),
+                        (ex - s * rx * 0.82, ey + 2.0),
+                        (ex, ey + 4.8),
+                        (ex + s * rx * 0.82, ey + 1.0),
                     ]),
-                    self._fur_line, 1.75,
+                    self._fur_line, 1.85,
                 )
                 continue
             if eyes == "happy":
-                # Sweet blissful curved happy cat-kiss eyes
+                # Sweet curved happy cat-kiss eyes
                 self._line(
                     shape([
-                        (ex - s * rx * 0.82, ey + 2.4),
-                        (ex, ey - 2.4),
-                        (ex + s * rx * 0.82, ey + 1.6),
+                        (ex - s * rx * 0.80, ey + 2.6),
+                        (ex, ey - 3.2),
+                        (ex + s * rx * 0.80, ey + 1.8),
                     ]),
-                    self._fur_line, 1.85,
+                    self._fur_line, 2.0,
                 )
                 continue
             if eyes == "squeezed":
                 self._line(
                     shape([
-                        (ex - s * rx * 0.82, ey + 1.8),
-                        (ex, ey - 1.8),
-                        (ex + s * rx * 0.82, ey + 1.4),
+                        (ex - s * rx * 0.80, ey + 2.0),
+                        (ex, ey - 2.2),
+                        (ex + s * rx * 0.80, ey + 1.6),
                     ]),
-                    self._fur_line, 1.85,
+                    self._fur_line, 1.95,
                 )
                 if self.scale >= 0.60:
                     self._line(
                         shape([
-                            (ex - s * rx * 0.56, ey + 5.0),
-                            (ex, ey + 3.0),
-                            (ex + s * rx * 0.56, ey + 4.8),
+                            (ex - s * rx * 0.54, ey + 5.2),
+                            (ex, ey + 3.2),
+                            (ex + s * rx * 0.54, ey + 5.0),
                         ]),
-                        self._fur_line, 0.85,
+                        self._fur_line, 0.90,
                     )
                 continue
 
             # 1. Soft velvety dark lash socket rim
-            self._poly(shape(self._scaled(eye_pts, ex, ey, 1.12)), self._eye_rim, "", 1, smooth=True)
+            self._poly(shape(self._scaled(eye_pts, ex, ey, 1.10)), self._eye_rim, "", 1, smooth=True)
             # 2. Delicate dark olive-gold limbal ring
             self._poly(shape(eye_pts), self._iris_limbal, "", 1, smooth=True)
             # 3. Outer olive-chartreuse iris -> wide luminous yellow-green iris
             self._poly(shape(self._scaled(eye_pts, ex, ey, 0.94, 0, 0.2)), self._iris_dark, "", 1, smooth=True)
-            self._poly(shape(self._scaled(eye_pts, ex, ey, 0.84, 0, 0.5)), self._iris_main, "", 1, smooth=True)
-            # 4. Radiant warm yellow-green inner glow crescent (glassy sunlit real-cat eye depth!)
-            if self.scale >= 0.45:
-                gx_off = max(-2.2, min(2.2, gaze[0] * 0.22))
+            self._poly(shape(self._scaled(eye_pts, ex, ey, 0.85, 0, 0.5)), self._iris_main, "", 1, smooth=True)
+            # 4. Soft upper-lid glass shadow crescent (gives instant wet-orb 3D depth!)
+            if self.scale >= 0.42:
+                top_shade = [
+                    (ex - rx * 0.78, ey - ry * 0.30),
+                    (ex - rx * 0.42, ey - ry * 0.82),
+                    (ex + rx * 0.42, ey - ry * 0.82),
+                    (ex + rx * 0.78, ey - ry * 0.30),
+                    (ex + rx * 0.35, ey - ry * 0.48),
+                    (ex - rx * 0.35, ey - ry * 0.48),
+                ]
+                self._poly(shape(top_shade), self._iris_top_shade, "", 1, smooth=True)
+            # 5. Radiant warm sunlit lower-inner glow crescent
+            if self.scale >= 0.42:
+                gx_off = max(-2.4, min(2.4, gaze[0] * 0.24))
                 crescent = [
-                    (ex - rx * 0.64 + gx_off, ey + ry * 0.14),
-                    (ex - rx * 0.28 + gx_off, ey + ry * 0.68),
-                    (ex + rx * 0.30 + gx_off, ey + ry * 0.68),
-                    (ex + rx * 0.64 + gx_off, ey + ry * 0.14),
-                    (ex + rx * 0.28 + gx_off, ey + ry * 0.38),
-                    (ex - rx * 0.28 + gx_off, ey + ry * 0.38),
+                    (ex - rx * 0.68 + gx_off, ey + ry * 0.14),
+                    (ex - rx * 0.30 + gx_off, ey + ry * 0.74),
+                    (ex + rx * 0.32 + gx_off, ey + ry * 0.74),
+                    (ex + rx * 0.68 + gx_off, ey + ry * 0.14),
+                    (ex + rx * 0.30 + gx_off, ey + ry * 0.40),
+                    (ex - rx * 0.30 + gx_off, ey + ry * 0.40),
                 ]
                 self._poly(shape(crescent), self._iris_glow, "", 1, smooth=True)
 
-            # 5. Large, sweet, glossy dark oval-round pupil (adorable like real Kömür's photo!)
-            gx_c = max(-3.0, min(3.0, gaze[0] * 0.48)) * (0.72 if far_eye else 1.0)
-            gy_c = max(-2.0, min(2.0, gaze[1] * 0.46))
+            # 6. Big adorable glossy round-oval boba pupil (signature cute real-Kömür gaze!)
+            gx_c = max(-3.6, min(3.6, gaze[0] * 0.56)) * (0.72 if far_eye else 1.0)
+            gy_c = max(-2.6, min(2.6, gaze[1] * 0.52))
             px, py = ex + gx_c, ey + gy_c
-            ph = ry * 0.74
+            ph = ry * 0.72
             if p_norm <= 0.18:
-                # Sharp narrow vertical slit ONLY when hissing / bright glare
-                pw = (1.6 + 1.4 * (p_norm / 0.18)) * (0.82 if far_eye else 1.0)
+                # Narrow slit ONLY when hissing
+                pw = (1.8 + 1.6 * (p_norm / 0.18)) * (0.82 if far_eye else 1.0)
                 slit = [
                     (px, py - ph),
                     (px + pw * 0.88, py - ph * 0.42),
@@ -809,233 +851,224 @@ class CatRenderer:
                 ]
                 self._poly(shape(slit), self._pupil_col, "", 1, smooth=True)
             else:
-                # Wide adorable rounded-oval pupil -> big boba-round orb when excited/dark
+                # Big glossy round-oval pupil (~55-72% of iris like real Kömür's photo!)
                 u_d = (p_norm - 0.18) / 0.82
-                pw = (3.8 + 3.4 * u_d) * (0.80 if far_eye else 1.0)
-                ph_eff = min(ry * 0.80, ph + 0.6 * u_d)
+                pw = (5.4 + 4.4 * u_d) * (0.80 if far_eye else 1.0)
+                ph_eff = min(ry * 0.80, ph + 1.1 * u_d)
                 self._oval(*tf(px - pw, py - ph_eff), *tf(px + pw, py + ph_eff), self._pupil_col)
 
-            # 6. Crisp twin bright white sparkle catchlights!
-            cl_x = px - pw * 0.44 - 1.1
-            cl_y = py - ph * 0.48
-            r_big = 2.05 if not far_eye else 1.75
+            # 7. Crisp luminous twin sparkle catchlights (big primary + tiny secondary!)
+            cl_x = px - pw * 0.38 - 1.3
+            cl_y = py - ph * 0.42
+            r_big = 2.85 if not far_eye else 2.25
             self._oval(*tf(cl_x - r_big, cl_y - r_big), *tf(cl_x + r_big, cl_y + r_big), self.WHITE)
-            if self.scale >= 0.50:
-                cl2_x = px + pw * 0.34 + 0.9
-                cl2_y = py + ph * 0.30
-                r_sm = 1.05 if not far_eye else 0.9
+            if self.scale >= 0.45:
+                cl2_x = px + pw * 0.38 + 0.9
+                cl2_y = py + ph * 0.34
+                r_sm = 1.35 if not far_eye else 1.10
                 self._oval(*tf(cl2_x - r_sm, cl2_y - r_sm), *tf(cl2_x + r_sm, cl2_y + r_sm), self.WHITE)
 
-            # 7. Soft upper lash rim
+            # 8. Soft upper lash curve
             self._line(
                 shape([
-                    (ex - s * rx * 0.94, ey + ry * 0.14),
-                    (ex - s * rx * 0.56, ey - ry * 0.78),
-                    (ex + s * rx * 0.16, ey - ry * 0.98),
-                    (ex + s * rx * 0.96, ey - ry * 0.12),
+                    (ex - s * rx * 0.95, ey + ry * 0.12),
+                    (ex - s * rx * 0.56, ey - ry * 0.80),
+                    (ex + s * rx * 0.16, ey - ry * 0.99),
+                    (ex + s * rx * 0.96, ey - ry * 0.10),
                 ]),
-                self._eye_rim, 1.5,
+                self._eye_rim, 1.65,
             )
 
-            # 8. Smooth drooping / slow-blinking upper eyelid
+            # 9. Smooth drooping / slow-blinking upper eyelid
             if lid > 0.02:
-                top = ey - ry - 1.5
-                cover = top + (ry * 2.0 + 1.0) * lid
+                top = ey - ry - 1.8
+                cover = top + (ry * 2.0 + 1.2) * lid
                 self._poly(
                     shape([
-                        (ex - rx - 2.5, top),
-                        (ex + rx + 2.5, top),
-                        (ex + rx + 2.5, cover - 2.2),
-                        (ex, cover + 0.6),
-                        (ex - rx - 2.5, cover - 2.0),
+                        (ex - rx - 2.8, top),
+                        (ex + rx + 2.8, top),
+                        (ex + rx + 2.8, cover - 2.2),
+                        (ex, cover + 0.8),
+                        (ex - rx - 2.8, cover - 2.0),
                     ]),
                     self._coat, "", 1, smooth=True,
                 )
                 self._line(
                     shape([
                         (ex - s * rx * 0.92, cover - 1.4),
-                        (ex, cover + 0.8),
+                        (ex, cover + 0.9),
                         (ex + s * rx * 0.92, cover - 1.8),
                     ]),
-                    self._eye_rim, 1.25,
+                    self._eye_rim, 1.35,
                 )
 
     def _head_muzzle_mouth(self, shape, tf, mouth, open_amount, tongue_out, chomp, blush, whiskers, profile=0.0):
-        """Plush ALL-COAT face (NO white muzzle patch!), cute matte velvet nose, long white whiskers & brow hairs."""
+        """Plush ALL-COAT face (NO white muzzle patch!), cute velvet button nose, cascading white whiskers."""
         p = max(0.0, min(1.0, float(profile)))
-        mx = p * 16.5  # nose/muzzle center shifts forward (+x) in 3/4 profile
+        mx = p * 17.0  # nose/muzzle center shifts forward (+x) in 3/4 profile
 
         # Subtle plush velvety cheek/muzzle pads (coat-colored — matches real Kömür's all-black face!)
-        if self.scale >= 0.50:
+        if self.scale >= 0.45:
             for s in (-1, 1):
-                sx = 1.0 if p <= 0.01 else (0.72 if s > 0 else 1.05)
+                sx = 1.0 if p <= 0.01 else (0.72 if s > 0 else 1.06)
                 pad = [
                     (mx + s * 1.4 * sx, 14.5),
-                    (mx + s * 9.5 * sx, 14.0),
-                    (mx + s * 13.8 * sx, 19.8),
-                    (mx + s * 7.8 * sx, 24.4),
-                    (mx + s * 1.2 * sx, 20.8),
+                    (mx + s * 10.2 * sx, 13.8),
+                    (mx + s * 14.8 * sx, 20.0),
+                    (mx + s * 8.4 * sx, 25.0),
+                    (mx + s * 1.2 * sx, 21.2),
                 ]
                 self._poly(shape(pad), self._muzzle_puff, "", 1, smooth=True)
 
-        # Cute tiny matte charcoal-black velvet nose triangle (real Kömür!)
-        nw = 4.2 * (1.0 - p * 0.14)
+        # Cute tiny matte charcoal-black velvet button nose (real Kömür!)
+        nw = 4.5 * (1.0 - p * 0.14)
         nose = [
-            (mx - nw, 10.6), (mx, 9.8), (mx + nw, 10.6),
-            (mx + nw * 0.72, 13.4), (mx, 15.6), (mx - nw * 0.72, 13.4),
+            (mx - nw, 11.0), (mx, 10.1), (mx + nw, 11.0),
+            (mx + nw * 0.72, 13.8), (mx, 16.0), (mx - nw * 0.72, 13.8),
         ]
         self._poly(shape(nose), self._nose, self._nose_dark, 0.55, smooth=True)
-        if self.scale >= 0.50:
-            self._oval(*tf(mx - nw * 0.45, 10.4), *tf(mx + nw * 0.30, 11.9), self._nose_hi)
+        if self.scale >= 0.48:
+            self._oval(*tf(mx - nw * 0.44, 10.8), *tf(mx + nw * 0.28, 12.2), self._nose_hi)
 
-        # Delicate philtrum & realistic mouth expressions
+        # Delicate philtrum & expressive feline mouth
         if mouth == "yawn":
             opening = max(2.0, open_amount * 0.92)
-            mw = (7.4 + opening * 0.14) * (1.0 - p * 0.15)
+            mw = (7.6 + opening * 0.14) * (1.0 - p * 0.15)
             self._poly(
                 shape([
-                    (mx - mw, 16.5), (mx + mw, 16.5),
-                    (mx + mw * 1.08, 19.5 + opening * 0.55),
-                    (mx, 20.5 + opening),
-                    (mx - mw * 1.08, 19.5 + opening * 0.55),
+                    (mx - mw, 16.8), (mx + mw, 16.8),
+                    (mx + mw * 1.08, 19.8 + opening * 0.55),
+                    (mx, 20.8 + opening),
+                    (mx - mw * 1.08, 19.8 + opening * 0.55),
                 ]),
                 self._mouth_in, self._nose_dark, 0.65, smooth=True,
             )
-            # Cute tiny white upper fangs visible during wide yawn
-            if opening > 6.5 and self.scale >= 0.50:
-                self._poly(shape([(mx - mw * 0.62, 16.8), (mx - mw * 0.34, 16.8), (mx - mw * 0.48, 20.6)]), self.WHITE, "", 1)
-                self._poly(shape([(mx + mw * 0.34, 16.8), (mx + mw * 0.62, 16.8), (mx + mw * 0.48, 20.6)]), self.WHITE, "", 1)
-            # Curled soft pink tongue inside the yawn
+            if opening > 6.5 and self.scale >= 0.48:
+                self._poly(shape([(mx - mw * 0.62, 17.0), (mx - mw * 0.34, 17.0), (mx - mw * 0.48, 20.8)]), self.WHITE, "", 1)
+                self._poly(shape([(mx + mw * 0.34, 17.0), (mx + mw * 0.62, 17.0), (mx + mw * 0.48, 20.8)]), self.WHITE, "", 1)
             tx_r = mw * 0.58
             self._poly(
                 shape([
-                    (mx - tx_r, 19.5 + opening * 0.52),
-                    (mx, 18.2 + opening * 0.38),
-                    (mx + tx_r, 19.5 + opening * 0.52),
-                    (mx + tx_r * 0.85, 20.8 + opening * 0.92),
-                    (mx, 21.8 + opening * 1.02),
-                    (mx - tx_r * 0.85, 20.8 + opening * 0.92),
+                    (mx - tx_r, 19.8 + opening * 0.52),
+                    (mx, 18.5 + opening * 0.38),
+                    (mx + tx_r, 19.8 + opening * 0.52),
+                    (mx + tx_r * 0.85, 21.0 + opening * 0.92),
+                    (mx, 22.0 + opening * 1.02),
+                    (mx - tx_r * 0.85, 21.0 + opening * 0.92),
                 ]),
                 self._tongue, "", 1, smooth=True,
             )
         elif mouth == "hiss":
             mw = 9.0 * (1.0 - p * 0.15)
             self._poly(
-                shape([(mx - mw, 16.2), (mx + mw, 16.2), (mx + mw * 1.08, 24.5), (mx, 29.8), (mx - mw * 1.08, 24.5)]),
+                shape([(mx - mw, 16.4), (mx + mw, 16.4), (mx + mw * 1.08, 24.8), (mx, 30.0), (mx - mw * 1.08, 24.8)]),
                 self._mouth_in, self._nose_dark, 0.70, smooth=True,
             )
-            self._poly(shape([(mx - mw * 0.80, 17.0), (mx - mw * 0.50, 17.0), (mx - mw * 0.65, 22.8)]), self.WHITE, "", 1)
-            self._poly(shape([(mx + mw * 0.50, 17.0), (mx + mw * 0.80, 17.0), (mx + mw * 0.65, 22.8)]), self.WHITE, "", 1)
-            self._oval(*tf(mx - mw * 0.42, 24.0), *tf(mx + mw * 0.42, 28.4), self._tongue)
+            self._poly(shape([(mx - mw * 0.80, 17.2), (mx - mw * 0.50, 17.2), (mx - mw * 0.65, 23.0)]), self.WHITE, "", 1)
+            self._poly(shape([(mx + mw * 0.50, 17.2), (mx + mw * 0.80, 17.2), (mx + mw * 0.65, 23.0)]), self.WHITE, "", 1)
+            self._oval(*tf(mx - mw * 0.42, 24.2), *tf(mx + mw * 0.42, 28.6), self._tongue)
         elif mouth == "chirp":
-            self._line(shape([(mx, 15.6), (mx, 18.0)]), self._lip_line, 0.95)
-            self._oval(*tf(mx - 2.8, 18.0), *tf(mx + 2.8, 23.0), self._mouth_in)
+            self._line(shape([(mx, 16.0), (mx, 18.4)]), self._lip_line, 0.95)
+            self._oval(*tf(mx - 2.8, 18.4), *tf(mx + 2.8, 23.4), self._mouth_in)
         elif mouth == "sneeze":
-            self._line(shape([(mx, 15.6), (mx, 17.6)]), self._lip_line, 0.95)
-            self._oval(*tf(mx - 4.6, 17.6), *tf(mx + 4.6, 25.4), self._mouth_in)
+            self._line(shape([(mx, 16.0), (mx, 18.0)]), self._lip_line, 0.95)
+            self._oval(*tf(mx - 4.6, 18.0), *tf(mx + 4.6, 25.8), self._mouth_in)
         elif mouth == "groom":
-            self._line(shape([(mx, 15.6), (mx, 19.2)]), self._lip_line, 0.95)
+            self._line(shape([(mx, 16.0), (mx, 19.4)]), self._lip_line, 0.95)
             ext = 0.45 + 0.55 * max(0.0, min(1.0, tongue_out if tongue_out > 0 else 0.75))
             self._poly(
                 shape([
-                    (mx + 1.0, 19.2),
-                    (mx + 12.5 * ext, 21.8 + ext * 1.8),
-                    (mx + 7.2 * ext, 29.8 + ext * 3.0),
-                    (mx + 0.4, 24.0),
+                    (mx + 1.0, 19.4),
+                    (mx + 12.5 * ext, 22.0 + ext * 1.8),
+                    (mx + 7.2 * ext, 30.0 + ext * 3.0),
+                    (mx + 0.4, 24.2),
                 ]),
                 self._tongue, "", 1, smooth=True,
             )
         elif mouth == "lap":
-            self._line(shape([(mx, 15.6), (mx, 19.0)]), self._lip_line, 0.95)
-            self._oval(*tf(mx - 4.0, 18.6), *tf(mx + 4.0, 23.2), self._mouth_in)
+            self._line(shape([(mx, 16.0), (mx, 19.2)]), self._lip_line, 0.95)
+            self._oval(*tf(mx - 4.0, 18.8), *tf(mx + 4.0, 23.4), self._mouth_in)
             ext = max(0.0, min(1.0, tongue_out))
             if ext > 0.08:
-                ty = 22.4 + ext * 14.2
+                ty = 22.6 + ext * 14.2
                 self._poly(
                     shape([
-                        (mx - 3.2, 20.4), (mx + 3.2, 20.4),
-                        (mx + 4.2, 23.0 + ext * 8.2), (mx, ty), (mx - 4.2, 23.0 + ext * 8.2),
+                        (mx - 3.2, 20.6), (mx + 3.2, 20.6),
+                        (mx + 4.2, 23.2 + ext * 8.2), (mx, ty), (mx - 4.2, 23.2 + ext * 8.2),
                     ]),
                     self._tongue, "", 1, smooth=True,
                 )
         elif mouth == "munch":
             ch = max(0.0, min(1.0, chomp))
-            self._line(shape([(mx, 15.6), (mx, 19.0)]), self._lip_line, 0.95)
+            self._line(shape([(mx, 16.0), (mx, 19.2)]), self._lip_line, 0.95)
             if ch > 0.25:
                 oh = 1.8 + ch * 4.4
-                self._oval(*tf(mx - 3.8, 19.0), *tf(mx + 3.8, 19.0 + oh), self._mouth_in)
-                self._oval(*tf(mx - 2.3, 19.0 + oh * 0.45), *tf(mx + 2.3, 19.0 + oh), self._tongue)
-            self._line(shape([(mx, 19.0), (mx - 4.2, 22.2 - ch * 1.0), (mx - 8.2, 20.2)]), self._lip_line, 0.95)
-            self._line(shape([(mx, 19.0), (mx + 4.2, 22.2 - ch * 1.0), (mx + 8.2, 20.2)]), self._lip_line, 0.95)
+                self._oval(*tf(mx - 3.8, 19.2), *tf(mx + 3.8, 19.2 + oh), self._mouth_in)
+                self._oval(*tf(mx - 2.3, 19.2 + oh * 0.45), *tf(mx + 2.3, 19.2 + oh), self._tongue)
+            self._line(shape([(mx, 19.2), (mx - 4.4, 22.6 - ch * 1.0), (mx - 8.6, 20.4)]), self._lip_line, 1.0)
+            self._line(shape([(mx, 19.2), (mx + 4.4, 22.6 - ch * 1.0), (mx + 8.6, 20.4)]), self._lip_line, 1.0)
         else:
-            # Subtle warm feline upper-lip curve on plush black velvet
-            self._line(shape([(mx, 15.6), (mx, 19.0)]), self._lip_line, 0.95)
-            self._line(shape([(mx, 19.0), (mx - 4.2, 22.2), (mx - 8.2, 20.4)]), self._lip_line, 0.95)
-            self._line(shape([(mx, 19.0), (mx + 4.2 * (1.0 - p * 0.2), 22.2), (mx + 8.0 * (1.0 - p * 0.25), 20.4)]), self._lip_line, 0.95)
+            # Sweet gentle ':3' feline upper-lip curve on plush velvet muzzle
+            self._line(shape([(mx, 16.0), (mx, 19.4)]), self._lip_line, 1.0)
+            self._line(shape([(mx, 19.4), (mx - 4.6, 23.0), (mx - 9.2, 20.4)]), self._lip_line, 1.05)
+            self._line(shape([(mx, 19.4), (mx + 4.6 * (1.0 - p * 0.2), 23.0), (mx + 9.0 * (1.0 - p * 0.25), 20.4)]), self._lip_line, 1.05)
 
         if whiskers:
-            # Iconic sweeping long bright white whiskers & whisper-fine white brow hairs (real Kömür!)
-            w_thick = 0.96 if (_IS_MAC and self.scale < 0.75) else 0.82
+            # Signature real-Kömür cascading long bright white whiskers (curving softly OUT & DOWN!)
+            w_thick = 0.92 if (_IS_MAC and self.scale < 0.75) else 0.78
             w_col = self._whisker_col
-            brow_col = blend(w_col, self._coat, 0.24)
-            brow_thick = max(0.65, w_thick * 0.74)
+            brow_col = self._brow_whisker
+            brow_thick = max(0.55, w_thick * 0.62)
             if p <= 0.05:
                 for s in (-1, 1):
-                    root = (s * 13.5, 17.5)
-                    # 4 sweeping long gracefully arching bright-white whiskers per cheek!
-                    for (mid_x, mid_y, tip_x, tip_y) in (
-                        (35, 14.0, 58, 16.0),
-                        (38, 19.5, 62, 26.5),
-                        (35, 25.0, 56, 36.5),
-                        (29, 29.5, 46, 43.5),
+                    # 4 graceful downward-cascading white whiskers per cheek (exact match to real Kömür's photo!)
+                    for (rx0, ry0, mid_x, mid_y, tip_x, tip_y) in (
+                        (13.5, 16.0, 36.0, 16.5, 58.0, 23.0),
+                        (14.0, 18.2, 39.0, 22.5, 62.0, 34.0),
+                        (13.0, 20.2, 35.0, 28.5, 55.0, 44.5),
+                        (11.5, 22.0, 28.0, 33.5, 44.0, 50.0),
                     ):
-                        self._line(shape([root, (s * mid_x, mid_y), (s * tip_x, tip_y)]), w_col, w_thick)
-                    # 2 delicate whisper-fine curving white eyebrow hairs above each eye (never colliding with ears!)
-                    for (bx, by, cmx, cmy, btx, bty) in (
-                        (14.0, -17.5, 17.5, -26.5, 22.0, -33.0),
-                        (18.5, -16.8, 24.0, -24.5, 29.5, -29.5),
-                    ):
-                        self._line(
-                            shape([(s * bx, by), (s * cmx, cmy), (s * btx, bty)]),
-                            brow_col, brow_thick,
-                        )
+                        self._line(shape([(s * rx0, ry0), (s * mid_x, mid_y), (s * tip_x, tip_y)]), w_col, w_thick)
+                    # Single ultra-delicate whisper-fine arched brow whisker per side (never looks like forehead scratches!)
+                    self._line(
+                        shape([(s * 17.5, -17.5), (s * 24.5, -24.5), (s * 32.5, -27.5)]),
+                        brow_col, brow_thick,
+                    )
             else:
-                # 3/4 profile whiskers: near-side sweep gracefully back across cheek, far-side fan forward!
-                near_root = (mx - 6.5, 17.5)
+                # 3/4 profile whiskers: cascading gracefully back & slightly down along cheek
+                near_root = (mx - 6.0, 17.8)
                 for (dx1, dy1, dx2, dy2) in (
-                    (-22, -0.5, -46, 4.5),
-                    (-25, 4.5, -50, 14.0),
-                    (-23, 9.5, -45, 23.5),
-                    (-18, 13.5, -34, 31.0),
+                    (-22, 1.5, -46, 9.5),
+                    (-25, 6.5, -50, 19.5),
+                    (-22, 11.5, -43, 29.0),
+                    (-16, 15.5, -31, 35.5),
                 ):
                     self._line(
                         shape([near_root, (near_root[0] + dx1, near_root[1] + dy1), (near_root[0] + dx2, near_root[1] + dy2)]),
                         w_col, w_thick,
                     )
-                far_root = (mx + 6.5, 17.2)
+                far_root = (mx + 6.5, 17.5)
                 for (dx1, dy1, dx2, dy2) in (
-                    (16, -2.0, 34, -0.5),
-                    (18, 2.5, 36, 8.0),
-                    (16, 7.0, 31, 16.5),
+                    (16, 0.5, 34, 5.0),
+                    (18, 5.0, 36, 13.5),
+                    (15, 9.5, 30, 21.0),
                 ):
                     self._line(
                         shape([far_root, (far_root[0] + dx1, far_root[1] + dy1), (far_root[0] + dx2, far_root[1] + dy2)]),
-                        w_col, w_thick * 0.90,
+                        w_col, w_thick * 0.88,
                     )
-                # 2 whisper-fine gently fanned brow hairs arcing above near eye
-                near_bx = -17.0 + p * 19.8
-                for (ox, oy, tx, ty) in ((-3.5, -15.5, -12.5, -26.5), (1.0, -16.0, -3.5, -29.5)):
-                    self._line(
-                        shape([(near_bx + ox, oy), (near_bx + (ox + tx) * 0.5, (oy + ty) * 0.5 - 2.2), (near_bx + tx, ty)]),
-                        brow_col, brow_thick,
-                    )
+                near_bx = -17.8 + p * 20.4
+                self._line(
+                    shape([(near_bx - 2.0, -16.5), (near_bx - 8.5, -23.5), (near_bx - 16.0, -26.0)]),
+                    brow_col, brow_thick,
+                )
 
-    def _head(self, cx, cy, t, *, size=0.86, tilt=0.0, eyes="open", pupil=0.3,
+    def _head(self, cx, cy, t, *, size=0.92, tilt=0.0, eyes="open", pupil=0.62,
               gaze=(0.0, 0.0), lid=0.0, mouth="closed", ears="up", twitch=True,
               whiskers=True, open_amount=12.0, blush=False, tongue_out=0.0, chomp=0.0,
               profile=0.0):
         """Draw adorable plush real-Kömür head centred at (cx, cy).
-        ``profile`` (0.0..1.0): 0.0 = front-facing (sit/box), 0.65 = natural 3/4 profile (walk/side)."""
+        ``profile`` (0.0..1.0): 0.0 = front-facing (sit/box), 0.56 = natural cute 3/4 profile (walk/side)."""
         self._head_logical = (cx, cy)
         size = size * self._growth_head_scale
         p = max(0.0, min(1.0, float(profile)))
@@ -1055,57 +1088,57 @@ class CatRenderer:
         def shape(pts):
             return [tf(x, y) for x, y in pts]
 
-        # 1. Plush pointed ears behind skull
+        # 1. Plush wide-set pointed ears behind skull
         self._head_ears(shape, t, ears, twitch, profile=p)
 
-        # 2. Plush round-cheeked velvety feline skull (morphs smoothly into 3/4 profile!)
+        # 2. Adorable plush chubby-cheeked velvety feline skull with soft cheek fluff!
         if p <= 0.01:
             skull = [
-                (0, -35.0),
-                (18.5, -33.0),
-                (34.5, -20.5),
-                (42.0, -1.5),
-                (41.5, 13.5),
-                (30.5, 27.5),
-                (15.5, 35.5),
-                (0, 38.0),
-                (-15.5, 35.5),
-                (-30.5, 27.5),
-                (-41.5, 13.5),
-                (-42.0, -1.5),
-                (-34.5, -20.5),
-                (-18.5, -33.0),
+                (0, -35.5),
+                (20.0, -33.0),
+                (37.5, -19.0),
+                (45.5, 0.5),
+                (46.0, 14.5),     # soft plush outer cheek fluff
+                (35.0, 27.5),
+                (17.0, 34.5),
+                (0, 36.5),        # soft cute chin
+                (-17.0, 34.5),
+                (-35.0, 27.5),
+                (-46.0, 14.5),
+                (-45.5, 0.5),
+                (-37.5, -19.0),
+                (-20.0, -33.0),
             ]
         else:
-            # Cute plush 3/4-profile cat head: rounded back-of-head + gentle protruding snout/cheek on +x
-            snout = p * 8.5
+            # Cute plush 3/4-profile cat head: soft rounded dome + gentle sweet muzzle + plush cheek
+            snout = p * 9.5
             back = p * 5.0
             skull = [
-                (p * 2.0, -34.5),
-                (18.0 + p * 3.5, -31.5),
-                (32.5 + p * 4.5, -18.5),
-                (38.5 + snout * 0.55, -2.5),
-                (40.0 + snout, 11.5),
-                (32.5 + snout * 0.85, 25.5),
-                (18.0 + snout * 0.55, 34.5),
-                (2.0 + p * 4.0, 36.5),
-                (-16.0 + back * 0.3, 33.5),
-                (-31.5 + back * 0.4, 24.5),
-                (-40.5 + back * 0.3, 10.5),
-                (-40.5 + back * 0.2, -5.0),
-                (-33.5 + back * 0.2, -21.5),
-                (-17.5 + p * 1.0, -32.5),
+                (p * 2.0, -35.0),
+                (19.0 + p * 3.8, -32.0),
+                (34.5 + p * 4.5, -18.0),
+                (41.5 + snout * 0.55, -1.5),
+                (43.0 + snout, 12.5),
+                (34.5 + snout * 0.82, 26.0),
+                (19.0 + snout * 0.52, 34.0),
+                (2.0 + p * 4.0, 35.8),
+                (-17.5 + back * 0.3, 33.0),
+                (-34.5 + back * 0.4, 24.5),
+                (-43.5 + back * 0.3, 11.0),
+                (-43.0 + back * 0.2, -4.5),
+                (-35.5 + back * 0.2, -20.5),
+                (-19.0 + p * 1.0, -32.5),
             ]
 
-        # Ultra-plush all-coat velvety head (ZERO white face patch, ZERO harsh gray lines!)
-        self._poly(shape(skull), self._coat_shadow, self._outline, 0.7, smooth=True)
-        self._poly(shape(self._scaled(skull, p * 3.0, 0, 0.96, 0, -1.0)), self._coat, "", 1, smooth=True)
-        self._poly(shape(self._scaled(skull, p * 3.0, -5, 0.78, 0, -3.0)), self._fur_mid, "", 1, smooth=True)
+        # Seamless plush velvety head (ZERO harsh outline rings!)
+        self._poly(shape(skull), self._coat_shadow, "", 1, smooth=True)
+        self._poly(shape(self._scaled(skull, p * 3.0, 0, 0.965, 0, -0.9)), self._coat, "", 1, smooth=True)
+        self._poly(shape(self._scaled(skull, p * 3.0, -6, 0.74, 0, -2.5)), self._fur_mid, "", 1, smooth=True)
 
-        # 3. Luminous big round chartreuse-gold eyes
+        # 3. Huge luminous round chartreuse-gold eyes
         self._head_eyes(shape, tf, eyes, pupil, gaze, lid, profile=p)
 
-        # 4. Plush coat-colored muzzle puffs, cute matte black nose, mouth, sweeping white whiskers & brow hairs
+        # 4. Plush all-coat muzzle, cute velvet nose, mouth & cascading white whiskers
         self._head_muzzle_mouth(
             shape, tf, mouth, open_amount, tongue_out, chomp, blush, whiskers, profile=p,
         )
@@ -1114,8 +1147,20 @@ class CatRenderer:
         self._accessory(shape, size)
 
     def _accessory(self, shape, size=1.0):
-        """Draw the chosen accessory in head-local coordinates."""
-        kind = self.accessory
+        """Draw active accessory or 4-slot costume combo in head-local coordinates."""
+        raw = self.accessory
+        if not raw:
+            return
+        try:
+            from costumes import ordered_active_items
+            items = ordered_active_items(raw)
+        except Exception:
+            items = [raw] if isinstance(raw, str) else []
+        for kind in items:
+            self._draw_single_accessory(kind, shape, size)
+
+    def _draw_single_accessory(self, kind, shape, size=1.0):
+        """Draw a single accessory item in head-local coordinates."""
         if LayeredCostumes.draw(self, kind, shape, size=size, t=self.micro_time):
             return
         if kind == "bow":
@@ -1146,12 +1191,12 @@ class CatRenderer:
             self._ellipse(shape([(0, -37)])[0], 21 * size, 4.8 * size, self.ACC_RED_DARK, self._ink, 1)
         elif kind == "glasses":
             for s in (-1, 1):
-                x0, y0 = s * 17.5, -5.0
-                self._ellipse(shape([(x0, y0)])[0], 12.2 * size, 10.8 * size, "", self.ACC_METAL, 1.8)
-                self._line(shape([(x0 - s * 5.5, y0 - 7), (x0 - s * 10, y0 - 2.5)]), self.WHITE, 1)
-            self._line(shape([(-5.5, -6.5), (0, -9.0), (5.5, -6.5)]), self.ACC_METAL, 1.8)
+                x0, y0 = s * 18.6, -2.5
+                self._ellipse(shape([(x0, y0)])[0], 13.8 * size, 12.6 * size, "", self.ACC_METAL, 1.9)
+                self._line(shape([(x0 - s * 6.0, y0 - 7.5), (x0 - s * 10.5, y0 - 2.5)]), self.WHITE, 1.1)
+            self._line(shape([(-5.0, -4.5), (0, -7.2), (5.0, -4.5)]), self.ACC_METAL, 1.9)
             for s in (-1, 1):
-                self._line(shape([(s * 30, -6.5), (s * 41, -10)]), self.ACC_METAL, 1.5)
+                self._line(shape([(s * 32.5, -4.5), (s * 44, -8.5)]), self.ACC_METAL, 1.6)
 
     # -- awake-state helpers ------------------------------------------------
     def _blink_amount(self, t, offset=0.0, allow_slow=True):
@@ -1180,78 +1225,74 @@ class CatRenderer:
             except (TypeError, ValueError):
                 pass
         if state in ("play", "laser_chase"):
-            return 1.0
+            return 0.94
         if state == "hiss":
             return 0.14
         if state in ("jump", "scratch"):
-            return 0.56
-        base = 0.42 if state == "look" else 0.28
+            return 0.72
+        # Photo-faithful real Kömür: big, soulful, dilated round black pupils!
+        base = 0.68 if state == "look" else 0.60
         low = bool(getattr(brain, "low_light", False))
         if not low:
             try:
                 low = time.localtime().tm_hour in self.LOW_LIGHT_HOURS
             except (OSError, ValueError, OverflowError):
                 low = False
-        return max(base, 0.78) if low else base
+        return max(base, 0.84) if low else base
 
     # -- poses --------------------------------------------------------------
     def _sit_body(self, lift=0.0, vib_x=0.0, tail_sw=(0.0, 0.0)):
-        """Photo-faithful plush sitting Kömür body: cozy silhouette, wide fluffy white bib & thick tail."""
+        """Photo-faithful adorable plush sitting Kömür: compact cozy body, wide fluffy chest ruff & thick tail."""
         g = self.GROUND
         sw, sw2 = tail_sw
 
         # 1. Thick plush fluffy black tail sweeping softly beside the haunch (like real Kömür's photo!)
         self._tail(
             [
-                (190, 242), (214, 250), (234, 240),
-                (242, 222 + sw * 0.6), (234, 206 + sw2 * 0.7), (222, 198 + sw2 * 0.8),
+                (186, 244), (212, 249), (233, 238),
+                (242, 220 + sw * 0.6), (235, 203 + sw2 * 0.7), (222, 195 + sw2 * 0.8),
             ],
-            [14.5, 14.0, 12.8, 11.4, 9.8, 8.0],
+            [15.8, 15.0, 13.8, 12.4, 10.8, 8.8],
         )
 
-        # 2. Cozy plush sitting feline body (soft rounded shoulders + plush haunch)
+        # 2. Compact, cozy, fluffy sitting feline body (soft rounded shoulders + plush haunch)
         body = [
-            (96 + vib_x, 126 - lift),
-            (144 + vib_x, 126 - lift),
-            (168 + vib_x, 146 - lift * 0.6),
-            (192 + vib_x * 0.6, 172),
-            (208 + vib_x * 0.4, 204),
-            (208, 236),
-            (194, g - 1),
+            (94 + vib_x, 134 - lift),
+            (146 + vib_x, 134 - lift),
+            (172 + vib_x, 152 - lift * 0.6),
+            (194 + vib_x * 0.6, 178),
+            (206 + vib_x * 0.4, 208),
+            (204, 238),
+            (190, g - 1),
             (146, g),
             (96, g - 2),
-            (78, 238),
-            (74 + vib_x * 0.6, 198),
-            (82 + vib_x, 154 - lift * 0.5),
+            (78, 240),
+            (74 + vib_x * 0.6, 204),
+            (80 + vib_x, 160 - lift * 0.5),
         ]
         self._fur_mass(
-            body, 140 + vib_x * 0.4, 198, inner=0.86, lift=3.0,
+            body, 138 + vib_x * 0.4, 202, inner=0.86, lift=2.8,
             highlight=[
-                (148 + vib_x * 0.6, 154 - lift * 0.4),
-                (180 + vib_x * 0.4, 176),
-                (198, 206),
+                (152 + vib_x * 0.6, 160 - lift * 0.4),
+                (180 + vib_x * 0.4, 182),
+                (196, 210),
             ],
+            outline_w=0.0,
         )
-        # Soft folded-haunch shading
-        if self.scale >= 0.55:
-            self._line(
-                [(154 + vib_x * 0.4, 190), (170 + vib_x * 0.3, 216), (164, 244)],
-                self._coat_shadow, 2.0,
-            )
         # Cute tucked white hind toe-tip peeking beside the haunch
-        self._sock(184, g - 2.5, 11.0, 5.6, toes=False)
+        self._sock(184, g - 2.5, 10.8, 5.4, toes=False)
 
-        # 3. Wide, lush, fluffy snow-white tuxedo chest bib starting RIGHT under the black chin!
+        # 3. Wide, fluffy snow-white tuxedo chest ruff RIGHT under the black chin (matches real Kömür's photo!)
         bib = [
-            (94 + vib_x, 130 - lift),
-            (146 + vib_x, 130 - lift),
-            (156 + vib_x * 0.8, 158),
-            (148 + vib_x * 0.6, 196),
-            (134 + vib_x * 0.3, 222),
-            (120 + vib_x * 0.2, 229),
-            (106 + vib_x * 0.3, 222),
-            (92 + vib_x * 0.6, 196),
-            (84 + vib_x * 0.8, 158),
+            (88 + vib_x, 134 - lift),
+            (152 + vib_x, 134 - lift),
+            (160 + vib_x * 0.8, 156),
+            (150 + vib_x * 0.6, 184),
+            (134 + vib_x * 0.3, 200),
+            (120 + vib_x * 0.2, 206),
+            (106 + vib_x * 0.3, 200),
+            (90 + vib_x * 0.6, 184),
+            (80 + vib_x * 0.8, 156),
         ]
         self._bib(bib, tufts=5)
 
@@ -1377,10 +1418,10 @@ class CatRenderer:
                 sock=True, sock_start=0.78, toes=True, show_beans=lift_r > 3.5, forward=-1.0,
             )
 
-        # 5. Photo-faithful adorable plush round black Kömür head
-        hx, hy = 120.0, 106.0 - lift
+        # 5. Photo-faithful adorable plush round black Kömür head (slightly larger cute proportion!)
+        hx, hy = 120.0, 108.0 - lift
         eyes, mouth, ears, lid = "open", "closed", "up", 0.0
-        gaze = (1.6 + math.sin(t * 0.42) * 1.4, math.cos(t * 0.31) * 0.6)
+        gaze = (1.2 + math.sin(t * 0.42) * 1.4, math.cos(t * 0.31) * 0.6)
         tilt = math.sin(t * 0.35) * 1.4
         yawn_open = 12.0
 
@@ -1447,12 +1488,21 @@ class CatRenderer:
             ears = "relaxed"
             lid = max(lid, 0.34 + 0.08 * math.sin(t * 2.2))
 
+        weather_now = getattr(brain, "weather", None)
+        if weather_now in ("rain", "snow", "storm") and state in ("sit", "look") and self._gaze_override is None:
+            # Gently watch falling raindrops or snowflakes
+            gaze = (math.sin(t * 0.8) * 3.2, -2.4 + math.sin(t * 1.3) * 0.8)
+            ears = "relaxed"
+        if self.time_of_day == "night" and state in ("sit", "look"):
+            # Slightly cozier sleepier nighttime eyelids
+            lid = max(lid, 0.14)
+
         if eyes == "open":
             allow_slow = state in ("sit", "look", "knead")
             lid = max(lid, self._blink_amount(t, allow_slow=allow_slow))
 
         self._head(
-            hx, hy - 2.0, t, size=0.95, tilt=tilt, eyes=eyes, pupil=pupil, gaze=gaze,
+            hx, hy - 2.0, t, size=1.04, tilt=tilt, eyes=eyes, pupil=pupil, gaze=gaze,
             lid=lid, mouth=mouth, ears=ears,
             open_amount=yawn_open, tongue_out=groom_tongue, profile=0.0,
         )
@@ -1467,53 +1517,49 @@ class CatRenderer:
             )
 
     def _gait_limb(self, leg, width, far):
-        """Plush, full-volume feline front or hind leg from IK joints with graceful swing wrist flex."""
+        """Plush, soft, adorable domestic cat leg with rounded haunch/shoulder & dainty white mitten."""
         pts = list(leg.joints)
         n = len(pts)
         front = (n == 3)
         swing_u = float(getattr(leg, "swing_u", 0.0) or 0.0)
         flex = math.sin(math.pi * swing_u) if leg.lifted else 0.0
+        paw_angle = float(getattr(leg, "paw_angle", (-22.0 if front else -16.0) * flex) or 0.0)
 
         if front:
-            # 3 joints: shoulder -> elbow -> foot; add plush mid-forearm & supple wrist flex
             s0, el, ft = pts[0], pts[1], pts[2]
-            ft_draw = (ft[0] - flex * 3.0, ft[1] - flex * 1.2)
-            fore_mid = ((el[0] + ft_draw[0]) * 0.5 + 1.2, (el[1] + ft_draw[1]) * 0.5)
-            chain = [s0, el, fore_mid, ft_draw]
-            widths = [width * 1.38, width * 0.98, width * 0.78, width * 0.64]
+            ft_draw = (ft[0] - flex * 2.4, ft[1] - flex * 0.8)
+            wrist = getattr(leg, "wrist", None)
+            if wrist is None:
+                wrist = ((el[0] + ft_draw[0]) * 0.5 + 1.0, (el[1] + ft_draw[1]) * 0.5)
+            chain = [s0, el, wrist, ft_draw]
+            widths = [width * 1.32, width * 0.96, width * 0.76, width * 0.66]
             sock_u = 0.78
         else:
-            # 4 joints: hip -> stifle/knee -> hock -> foot (plush rounded thigh -> supple Z-hock!)
             hp, kn, hk, ft = pts[0], pts[1], pts[2], pts[3]
-            ft_draw = (ft[0] - flex * 2.5, ft[1] - flex * 1.0)
+            ft_draw = (ft[0] - flex * 2.0, ft[1] - flex * 0.8)
             chain = [hp, kn, hk, ft_draw]
-            widths = [width * 1.66, width * 1.20, width * 0.80, width * 0.64]
+            # Full plush rounded cat thigh tapering softly to dainty ankle & paw
+            widths = [width * 1.58, width * 1.18, width * 0.80, width * 0.66]
             sock_u = 0.80
 
         base_col = self._far_fur if far else self._coat_shadow
-        # ZERO outline seam where limb joins body — seamless plush velvet fur!
         self._tapered(chain, widths, base_col, "", 1, round_start=True)
         if not far:
-            inner_pts = [(x + 0.5, y - 0.4) for x, y in chain]
-            self._tapered(inner_pts, [w * 0.91 for w in widths], self._coat, "", 1, round_start=True)
-            if self.scale >= 0.60:
-                hi_pts = [(x + w * 0.12, y - 0.3) for (x, y), w in zip(chain[:-1], widths[:-1])]
-                hi_w = [max(1.2, w * 0.20) for w in widths[:-1]]
-                self._tapered(hi_pts, hi_w, self._fur_mid, "", 1, round_start=True)
+            inner_pts = [(x + 0.4, y - 0.3) for x, y in chain]
+            self._tapered(inner_pts, [w * 0.92 for w in widths], self._coat, "", 1, round_start=True)
 
-        # Dainty snow-white toe-tip sock wrapping only the lower wrist/ankle
+        # Dainty little snow-white mitten wrapping just the paw tip
         s_pts, s_w = self._split_chain(chain, widths, sock_u)
-        self._tapered(s_pts, [w * 1.02 for w in s_w], self._white_mid if far else self.WHITE, "", 1, round_start=True)
+        self._tapered(s_pts, [w * 1.00 for w in s_w], self._white_mid if far else self.WHITE, "", 1, round_start=True)
         if not far:
             self._tapered(s_pts, [w * 0.92 for w in s_w], self.WHITE, "", 1, round_start=True)
 
         fx, fy = chain[-1]
         lift = max(0.0, self.GROUND - 2.0 - fy)
-        rx = (width * 0.48 + 2.4) * (0.92 if leg.lifted else 1.0)
-        ry = 5.6 if far else 6.2
-        paw_angle = (-22.0 if front else -16.0) * flex
+        rx = (width * 0.44 + 1.8) * (0.90 if leg.lifted else 1.0)
+        ry = 4.6 if far else 5.2
         self._sock(
-            fx + 1.8 - flex * 1.5, self.GROUND - 1.5, rx, ry,
+            fx + 1.4 - flex * 1.2, self.GROUND - 1.5, rx, ry,
             toes=not far and not leg.lifted, lift=lift, forward=1.0, angle=paw_angle,
         )
 
@@ -1528,99 +1574,111 @@ class CatRenderer:
         return abs(x - prev[1]) / (t - prev[0]) / max(self.scale, 1e-6)
 
     def _walk(self, t, state, pupil, speed=8.0, ground_speed=None, crouch=0.0, ears="up"):
-        """Genuine realistic plush 3/4-profile walking cat with 4-beat lateral gait & flowing tail."""
+        """Adorable, plush, nimble real-cat walk matching sitting Kömür's exact cozy proportions!"""
         g = self.GROUND
         if self._gait is None:
             from feline_locomotion import FelineGait
             self._gait = FelineGait()
+        # Keep brisk, nimble feline step cadence so Kömür NEVER feels sluggish/heavy!
+        min_walk_cadence = 88.0 if state == "follow" else 74.0
         if ground_speed is None:
-            ground_speed = speed * 7.0
+            ground_speed = max(speed * 10.0, min_walk_cadence)
+        else:
+            ground_speed = max(ground_speed * 1.15, min_walk_cadence)
         drop = max(0.0, float(crouch))
+        # Cozy real domestic-cat proportions: hips tucked inside plush body (y=212 -> ~38px cute legs below belly!)
         pose = self._gait.pose(t, ground_speed, {
-            "LH": (74, 198 + drop * 0.60), "LF": (172, 198 + drop * 0.60),
-            "RH": (90, 196 + drop * 0.60), "RF": (158, 196 + drop * 0.60),
+            "LH": (76, 212 + drop * 0.45), "LF": (160, 212 + drop * 0.45),
+            "RH": (90, 210 + drop * 0.45), "RF": (148, 210 + drop * 0.45),
         }, g - 2)
         bob = pose.bob + drop
-        sp = pose.spine
+        hb = getattr(pose, "hip_bob", bob) + drop
+        sb = getattr(pose, "shoulder_bob", bob) + drop
+        mid_b = (hb + sb) * 0.5
         sh = pose.shoulder * 0.95
+        head_bob = getattr(pose, "head_bob", pose.bob * 0.30)
+        head_nod = getattr(pose, "head_nod", 0.0)
+        cyc = 2.0 * math.pi * pose.phase
 
-        # 1. Far legs (softly recessed deeper coat shade for natural 3D depth)
-        self._gait_limb(pose.legs["RH"], 18.5, far=True)
-        self._gait_limb(pose.legs["RF"], 17.5, far=True)
+        # 1. Far plush legs softly shaded behind body
+        self._gait_limb(pose.legs["RH"], 15.5, far=True)
+        self._gait_limb(pose.legs["RF"], 14.5, far=True)
 
-        # 2. Thick plush fluffy black tail trailing gracefully with fluid travelling sine wave!
-        tail_drop = drop * 0.85
-        tw1 = math.sin(t * 2.5 - 0.5) * 4.5
-        tw2 = math.sin(t * 2.5 - 1.1) * 7.5
-        tw3 = math.sin(t * 2.5 - 1.7) * 10.5
-        tw4 = math.sin(t * 2.5 - 2.3) * 12.5
+        # 2. Lush, buoyant, happy S-curved plush black tail synced smoothly to the walk cadence!
+        tail_drop = drop * 0.80
+        tw1 = math.sin(cyc - 0.5) * 4.5
+        tw2 = math.sin(cyc - 1.1) * 8.0
+        tw3 = math.sin(cyc - 1.7) * 11.0
+        tw4 = math.sin(cyc - 2.3) * 13.0
         self._tail(
             [
-                (58, 178 + bob - sp * 0.5),
-                (40, 166 + bob + tw1 * 0.4 + tail_drop * 0.3),
-                (26, 148 + tw2 * 0.5 + tail_drop * 0.55),
-                (25, 126 + tw3 * 0.7 + tail_drop * 0.70),
-                (37, 108 + tw4 * 0.8 + tail_drop * 0.80),
-                (53, 100 + tw4 * 0.9 + tail_drop * 0.85),
+                (54, 188 + hb),
+                (34, 174 + hb * 0.7 + tw1 * 0.4 + tail_drop * 0.3),
+                (21, 150 + tw2 * 0.5 + tail_drop * 0.55),
+                (25, 125 + tw3 * 0.7 + tail_drop * 0.70),
+                (41, 108 + tw4 * 0.8 + tail_drop * 0.80),
+                (58, 104 + tw4 * 0.9 + tail_drop * 0.85),
             ],
-            [14.5, 14.0, 13.0, 11.6, 10.0, 8.2],
+            [15.8, 15.0, 14.0, 12.6, 11.0, 9.0],
+            outline_w=0.0,
         )
 
-        # 3. Plush, full-bodied feline torso (curved spine, soft shoulder rise, rounded rump, warm belly)
+        # 3. Cozy, full, plush feline torso (100% domestic cat silhouette — NOT skinny deer/dog!)
         body = [
-            (50, 180 + bob - sp),          # plush rounded rump back
-            (78, 156 + bob - sp),          # hip / pelvis crest
-            (124, 156 + bob),              # supple mid-back spine
-            (166, 152 + bob + sp - sh),    # plush shoulder withers
-            (192, 160 + bob + sp * 0.8),   # smooth plush neck/chest junction
-            (204, 180 + bob + sp),         # smooth natural rounded chest front
-            (194, 206 + bob + sp),         # sternum
-            (162, 215 + bob + sp * 0.5),   # cozy ribcage bottom
-            (122, 212 + bob),              # warm natural feline belly
-            (80, 216 + bob - sp * 0.5),    # plush hind thigh join
-            (52, 202 + bob - sp),          # lower rounded rump
+            (46, 196 + hb),                # soft rounded plush rump
+            (70, 169 + hb),                # cozy rounded hip crest
+            (116, 173 + mid_b),            # supple feline back
+            (156, 166 + sb - sh),          # smooth shoulder withers
+            (184, 174 + sb * 0.85),        # compact plush neck/chest join
+            (194, 194 + sb),               # warm rounded plush chest front
+            (182, 218 + sb),               # cozy lower chest
+            (152, 224 + sb * 0.7),         # plush ribcage
+            (116, 220 + mid_b),            # soft gentle feline belly curve
+            (80, 225 + hb),                # full rounded plush haunch
+            (52, 214 + hb),                # lower rounded rump
         ]
         self._fur_mass(
-            body, 128, 186 + bob, inner=0.86, lift=3.0,
+            body, 122, 197 + mid_b, inner=0.84, lift=2.6,
             highlight=[
-                (76, 164 + bob - sp),
-                (124, 161 + bob),
-                (168, 160 + bob + sp - sh),
+                (70, 177 + hb),
+                (116, 179 + mid_b),
+                (156, 173 + sb - sh),
             ],
+            outline_w=0.0,
         )
 
-        # Soft plush neck bridge connecting chest smoothly into the 3/4-profile head
-        head_y = 140.0 + pose.bob * 0.30 + drop * 0.90
+        # Compact cozy neck connecting directly into Kömür's cute plush head (NO giraffe neck!)
+        head_y = 149.0 + head_bob + drop * 0.85
         neck = [
-            (166, 156 + bob + sp * 0.6),
-            (190, head_y + 16),
-            (205, head_y + 28),
-            (200, 184 + bob + sp),
-            (172, 188 + bob + sp),
+            (154, 170 + sb - sh * 0.4),
+            (174, head_y + 20),
+            (198, head_y + 24),
+            (193, 196 + sb),
+            (164, 198 + sb),
         ]
         self._poly(neck, self._coat, "", 1, smooth=True)
 
-        # Smoothly integrated fluffy snow-white chest ruff following the natural chest contour!
+        # Smooth, flush snowy-white tuxedo chest ruff tucked cleanly INSIDE chest contour (NO protruding beard!)
         self._bib(
             [
-                (179, 170 + bob + sp * 0.7), (197, 178 + bob + sp),
-                (199, 194 + bob + sp), (188, 206 + bob + sp),
-                (176, 202 + bob + sp), (174, 186 + bob + sp),
+                (170, 177 + sb * 0.7), (189, 182 + sb),
+                (191, 199 + sb), (182, 214 + sb),
+                (170, 210 + sb), (165, 194 + sb),
             ],
             tufts=3,
         )
 
-        # 4. Near plush full-volume legs (thick rounded thigh/Z-hock & muscular shoulder/forearm)
-        self._gait_limb(pose.legs["LH"], 20.5, far=False)
-        self._gait_limb(pose.legs["LF"], 19.5, far=False)
+        # 4. Near plush cute cat legs seamlessly blended into rounded haunch & chest
+        self._gait_limb(pose.legs["LH"], 17.5, far=False)
+        self._gait_limb(pose.legs["LF"], 16.0, far=False)
 
-        # 5. Stabilized plush 3/4-profile Kömür head looking smoothly forward along stride!
+        # 5. Same adorable big-eyed plush real-Kömür head looking smoothly forward along stride!
         lid = self._blink_amount(t, allow_slow=False)
-        gaze = (3.8, 0.8) if state == "follow" else (2.8, 0.2)
+        gaze = (3.4, 0.5) if state == "follow" else (2.4, 0.2)
         self._head(
-            195.0, head_y, t, size=0.86, tilt=3.0 if drop > 5 else 1.0,
+            188.0, head_y, t, size=0.96, tilt=head_nod + (3.0 if drop > 5 else 0.5),
             eyes="open", pupil=pupil, gaze=gaze, lid=lid, ears=ears,
-            profile=0.68,
+            profile=0.44,
         )
 
     def _play(self, t, brain, pupil, ball_local):
@@ -2084,15 +2142,28 @@ class CatRenderer:
             self._growth_scale = 1.0
             self._growth_head_scale = 1.0
 
+        self.flip = facing < 0
         pointer_xy = getattr(brain, "pointer_xy", None)
         if pointer_xy is not None:
             head_px = self._xy(*self._head_logical)
+            bx_scr = getattr(brain, "x", None)
+            by_scr = getattr(brain, "y", None)
+            if isinstance(bx_scr, (int, float)) and isinstance(by_scr, (int, float)):
+                head_screen = (float(bx_scr) + head_px[0], float(by_scr) + head_px[1])
+            else:
+                head_screen = head_px
             is_dark = bool(getattr(brain, "low_light", False)) or self.time_of_day == "night"
             gaze_vec, smooth_pupil = self.gaze_controller.update(
-                dt, head_px, pointer_xy, is_dark=is_dark, play_mode=(state == "play")
+                dt, head_screen, pointer_xy, is_dark=is_dark, play_mode=(state == "play")
             )
+            if self.flip:
+                gaze_vec = (-gaze_vec[0], gaze_vec[1])
             self._gaze_override = gaze_vec
-            pupil = smooth_pupil if getattr(brain, "pupil_dilation", None) is None else self._pupil(brain, state)
+            if getattr(brain, "pupil_dilation", None) is not None:
+                pupil = self._pupil(brain, state)
+            else:
+                # Blend GazeController with photo-faithful adorable baseline pupil
+                pupil = max(smooth_pupil, self._pupil(brain, state))
         else:
             self._gaze_override = None
             pupil = self._pupil(brain, state)
@@ -2133,7 +2204,7 @@ class CatRenderer:
                 ball_local = (260 - ball[0], ball[1]) if self.flip else ball
 
         _NO_SWAY = ("sleep", "play", "hiss", "box_sit", "scratch", "jump",
-                    "laser_chase", "drink", "eat", "perch")
+                    "laser_chase", "drink", "eat", "perch", "peek", "notch_peek")
         if state not in _NO_SWAY and not getattr(brain, "paused", False):
             self.idle_sway = math.sin(t * 0.15) * 0.6
             self.dx += self.idle_sway
@@ -2149,7 +2220,7 @@ class CatRenderer:
         render_state = state
         vpose = getattr(brain, "visual_pose", None)
         vdur = float(getattr(brain, "visual_pose_duration", 0.0) or 0.0)
-        if state == "sit" and vpose in ("eat", "purr_idle") and float(getattr(brain, "elapsed", 0.0) or 0.0) < vdur:
+        if state in ("sit", "perch") and vpose in ("eat", "purr_idle", "peek", "notch_peek") and float(getattr(brain, "elapsed", 0.0) or 0.0) < vdur:
             render_state = vpose
         if render_state == "sleep":
             self._sleep(t, render_state, pupil)
@@ -2174,6 +2245,10 @@ class CatRenderer:
             cat_poses.draw_box_sit(self, t, brain, pupil)
         elif render_state == "perch":
             cat_poses.draw_perch(self, t, pupil)
+        elif render_state == "peek":
+            cat_poses.draw_peek(self, t, pupil)
+        elif render_state == "notch_peek":
+            cat_poses.draw_notch_peek(self, t, pupil)
         elif render_state == "jump":
             cat_poses.draw_jump(self, t, pupil)
         elif render_state == "laser_chase":

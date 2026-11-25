@@ -16,9 +16,9 @@ class Bounds:
 # Kendiliginden hareket profilleri. "normal" eski davranisa yakindir
 # (tum ekranda gezinme); "sakin" yuvanin etrafinda seyrek ve yavas gezer.
 ACTIVITY_PROFILES = {
-    "sakin": {"radius": 250.0, "speed": 30.0, "wander": 50, "idle": 20.0},
+    "sakin": {"radius": 250.0, "speed": 42.0, "wander": 50, "idle": 20.0},
     "normal": {"radius": None, "speed": 52.0, "wander": 30, "idle": 1.0},
-    "hareketli": {"radius": None, "speed": 70.0, "wander": 40, "idle": 0.7},
+    "hareketli": {"radius": None, "speed": 74.0, "wander": 40, "idle": 0.7},
 }
 IDLE_STATES = ("sit", "look", "groom")
 HOME_RETURN_DISTANCE = 60.0

@@ -29,7 +29,16 @@ if IS_WINDOWS:
     import ctypes
     from ctypes import wintypes
 
-from window_utils import IS_MAC, MAC_KEY, apply_color_key, ensure_floating
+from window_utils import (
+    IS_MAC,
+    MAC_KEY,
+    apply_color_key,
+    ensure_floating,
+    is_nonactivating_panel,
+    mac_hide_nonactivating_panel,
+    mac_prepare_hidden_panel,
+    mac_present_nonactivating_panel,
+)
 
 KEY = MAC_KEY if IS_MAC else "#ff00fe"   # saydam anahtar (çizimde kullanılmaz)
 FONT_FAMILY = "Segoe UI"
@@ -197,7 +206,8 @@ class SpeechBubble:
 
     def __init__(self, root, bounds=None):
         self.root = root
-        self.window = tk.Toplevel(root)
+        from window_utils import create_nonactivating_panel
+        self.window = create_nonactivating_panel(root)
         self.window.withdraw()
         self.window.title("Kömür — konuşma")
         self.window.configure(bg=KEY)
@@ -229,6 +239,8 @@ class SpeechBubble:
         self._last_now = None
         self._anim_start = None
         self._float_dy = 0
+        if IS_MAC and is_nonactivating_panel(self.window):
+            mac_prepare_hidden_panel(self.window, 120, 60)
 
     # -- public API ---------------------------------------------------------
     @property
@@ -380,7 +392,8 @@ class SpeechBubble:
         self._anim_start = None
         self._float_dy = 0
         try:
-            self.window.withdraw()
+            if not (IS_MAC and mac_hide_nonactivating_panel(self.window)):
+                self.window.withdraw()
         except tk.TclError:
             pass
 
@@ -475,15 +488,21 @@ class SpeechBubble:
             return
         self._visible = True
         try:
-            self.window.deiconify()
-            if not self._mapped_once:
-                self._mapped_once = True
-                self.window.update_idletasks()
-                _no_activate(self.window)
-            self.window.attributes("-topmost", True)
-            self.window.lift()
-            if IS_MAC:
-                ensure_floating(self.window, elevated=True)
+            if IS_MAC and is_nonactivating_panel(self.window):
+                wx, wy = self._pos
+                if wx is not None:
+                    place_window(self.window, wx, wy + self._float_dy, *self._size)
+                mac_present_nonactivating_panel(self.window, make_key=False, elevated=True)
+            else:
+                self.window.deiconify()
+                if not self._mapped_once:
+                    self._mapped_once = True
+                    self.window.update_idletasks()
+                    _no_activate(self.window)
+                self.window.attributes("-topmost", True)
+                self.window.lift()
+                if IS_MAC:
+                    ensure_floating(self.window, elevated=True)
         except tk.TclError:
             pass
         # deiconify can reset position on some WMs; re-place without activating

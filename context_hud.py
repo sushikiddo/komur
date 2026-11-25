@@ -4,7 +4,22 @@ from __future__ import annotations
 import time
 import tkinter as tk
 
-from window_utils import IS_MAC, Button, apply_color_key, ensure_floating, mac_app_is_active, mac_present_key_window
+from window_utils import (
+    IS_MAC,
+    Button,
+    apply_color_key,
+    create_nonactivating_panel,
+    ensure_floating,
+    is_nonactivating_panel,
+    mac_app_is_active,
+    mac_hide_nonactivating_panel,
+    mac_left_click_counter,
+    mac_prepare_hidden_panel,
+    mac_present_key_window,
+    mac_present_nonactivating_panel,
+    mac_right_click_counter,
+    pointer_position,
+)
 from bubble import ACCENT_GLOW, BORDER, FILL, KEY, SHADOW, TEXT, place_window, rounded_bubble_points, work_area_at
 
 SURFACE = "#1f2630"
@@ -15,29 +30,11 @@ XP_PER_LEVEL = 100
 DANGER_HOVER = "#b62324"
 HEART_COLOR = "#f778ba"
 
-ACCESSORY_ORDER = [
-    None,
-    "bow",
-    "scarf",
-    "hat",
-    "glasses",
-    "witch_hat",
-    "winter_set",
-    "cyberpunk_collar",
-    "headphones",
-]
+from costumes import COSTUME_LABELS as _COSTUME_LABELS
 
-ACCESSORY_LABELS = {
-    None: "Yok",
-    "bow": "Papyon",
-    "scarf": "Atkı",
-    "hat": "Şapka",
-    "glasses": "Gözlük",
-    "witch_hat": "Cadı Şapkası",
-    "winter_set": "Kış Seti",
-    "cyberpunk_collar": "Siber Tasma",
-    "headphones": "Kulaklık",
-}
+ACCESSORY_ORDER = list(_COSTUME_LABELS.keys())
+
+ACCESSORY_LABELS = dict(_COSTUME_LABELS)
 
 
 class ModernContextHUD:
@@ -45,12 +42,13 @@ class ModernContextHUD:
     2-column action cards, and bottom quick interaction pills.
     """
 
-    WIDTH = 316
+    WIDTH = 376
     HEIGHT = 538   # 12 kart = 6 satır (2 sütun) + başlık + ses anahtarı + alt düğmeler + ipucu satırı
 
     def __init__(self, app):
         self.app = app
-        self.window = tk.Toplevel(app.root)
+        host = getattr(app, "_tk_host", None) or app.root
+        self.window = create_nonactivating_panel(host, name="komur_hud")
         self.window.withdraw()
         self.window.title("Kömür — Hızlı Menü")
         self.window.overrideredirect(True)
@@ -95,6 +93,8 @@ class ModernContextHUD:
 
         self.window.bind("<Escape>", lambda _e: self.hide())
         self.window.bind("<FocusOut>", self._on_focus_out)
+        if IS_MAC and is_nonactivating_panel(self.window):
+            mac_prepare_hidden_panel(self.window, self.WIDTH, self.HEIGHT)
 
     @property
     def visible(self) -> bool:
@@ -324,15 +324,23 @@ class ModernContextHUD:
         self._visible = True
         self._shown_at = time.monotonic()
         try:
-            place_window(self.window, px, py, self.WIDTH, self.HEIGHT)
-            self.window.deiconify()
-            place_window(self.window, px, py, self.WIDTH, self.HEIGHT)
-            self.window.attributes("-topmost", True)
-            self.window.lift()
-            if IS_MAC:
-                ensure_floating(self.window, keyable=True, elevated=True)
-                mac_present_key_window(self.window)
-            self.window.focus_force()
+            if IS_MAC and is_nonactivating_panel(self.window):
+                place_window(self.window, px, py, self.WIDTH, self.HEIGHT)
+                mac_present_nonactivating_panel(self.window, make_key=True, elevated=True)
+                self._open_lc = mac_left_click_counter()
+                self._open_rc = mac_right_click_counter()
+            else:
+                place_window(self.window, px, py, self.WIDTH, self.HEIGHT)
+                self.window.deiconify()
+                place_window(self.window, px, py, self.WIDTH, self.HEIGHT)
+                self.window.attributes("-topmost", True)
+                self.window.lift()
+                if IS_MAC:
+                    ensure_floating(self.window, keyable=True, elevated=True)
+                    mac_present_key_window(self.window)
+                    self.window.focus_force()
+                else:
+                    self.window.focus_force()
             if IS_MAC:
                 self._schedule_mac_poll()
         except tk.TclError:
@@ -345,7 +353,8 @@ class ModernContextHUD:
         self._cancel_mac_poll()
         self._visible = False
         try:
-            self.window.withdraw()
+            if not (IS_MAC and mac_hide_nonactivating_panel(self.window)):
+                self.window.withdraw()
         except tk.TclError:
             pass
 
@@ -399,6 +408,22 @@ class ModernContextHUD:
                         text=on_label if toybox.has(key) else off_label
                     )
 
+        acc_btn = self.action_buttons.get("accessory")
+        if acc_btn is not None:
+            slots = settings.get("accessories", None) if settings is not None else None
+            cur_acc = slots if (isinstance(slots, dict) and slots) else (
+                settings.get("accessory", None) if settings is not None else None
+            )
+            if cur_acc:
+                try:
+                    from costumes import summary_label
+                    lbl = summary_label(cur_acc)
+                except Exception:
+                    lbl = ACCESSORY_LABELS.get(cur_acc, str(cur_acc))
+                acc_btn.configure(text=lbl if len(lbl) <= 18 else lbl[:17] + "…")
+            else:
+                acc_btn.configure(text="👓 Aksesuarlar")
+
         sound_btn = getattr(self, "sound_button", None)
         if sound_btn is not None:
             sound_var = getattr(self.app, "sound_var", None)
@@ -416,6 +441,8 @@ class ModernContextHUD:
     def _on_focus_out(self, event):
         if event.widget is not self.window or not self._visible:
             return
+        if is_nonactivating_panel(self.window):
+            return
         if IS_MAC and time.monotonic() - self._shown_at < 0.25:
             return
         self._cancel_focus_check()
@@ -427,6 +454,8 @@ class ModernContextHUD:
     def _check_focus_lost(self):
         self._focus_check_id = None
         if not self._visible or self._destroyed:
+            return
+        if is_nonactivating_panel(self.window):
             return
         if IS_MAC and time.monotonic() - self._shown_at < 0.25:
             return
@@ -456,6 +485,25 @@ class ModernContextHUD:
     def _poll_mac_active(self):
         self._mac_poll_id = None
         if not self._visible or self._destroyed:
+            return
+        if is_nonactivating_panel(self.window):
+            # NonactivatingPanel odak çalmaz: yalnız HUD dışına yeni bir tık gelince kapat.
+            if time.monotonic() - self._shown_at >= 0.20:
+                lc = mac_left_click_counter()
+                rc = mac_right_click_counter()
+                if lc != getattr(self, "_open_lc", lc) or rc != getattr(self, "_open_rc", rc):
+                    self._open_lc, self._open_rc = lc, rc
+                    try:
+                        px, py = pointer_position(self.window)
+                        wx, wy = self.window.winfo_rootx(), self.window.winfo_rooty()
+                        ww, wh = self.window.winfo_width(), self.window.winfo_height()
+                        if not (wx - 6 <= px <= wx + ww + 6 and wy - 6 <= py <= wy + wh + 6):
+                            self.hide()
+                            return
+                    except tk.TclError:
+                        self.hide()
+                        return
+            self._schedule_mac_poll()
             return
         if time.monotonic() - self._shown_at >= 0.35 and not mac_app_is_active():
             self.hide()
@@ -529,11 +577,19 @@ class ModernContextHUD:
         current = settings.get("accessory", None) if settings is not None else None
         idx = ACCESSORY_ORDER.index(current) if current in ACCESSORY_ORDER else 0
         nxt = ACCESSORY_ORDER[(idx + 1) % len(ACCESSORY_ORDER)]
-        if settings is not None and callable(getattr(settings, "set", None)):
-            settings.set("accessory", nxt)
+        try:
+            from costumes import normalize_accessories
+            slots = normalize_accessories(nxt)
+        except Exception:
+            slots = {}
+        if settings is not None:
+            if callable(getattr(settings, "update", None)):
+                settings.update(accessory=nxt, accessories=slots)
+            elif callable(getattr(settings, "set", None)):
+                settings.set("accessory", nxt)
         renderer = getattr(self.app, "renderer", None)
         if renderer is not None:
-            renderer.accessory = nxt
+            renderer.accessory = slots if slots else nxt
         label = ACCESSORY_LABELS.get(nxt, str(nxt))
         self._say(f"Kostüm: {label}", 3)
 
