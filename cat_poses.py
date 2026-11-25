@@ -666,9 +666,79 @@ def draw_purr_idle(r, t: float, pupil: float):
     )
 
     hx = 120.0 + vib_x
-    hy = 104.0 - lift
+    hy = 106.0 - lift
     tilt = math.sin(t * 1.1) * 4.2
     r._head(
-        hx, hy, t, size=0.95, tilt=tilt, eyes="happy", pupil=pupil,
+        hx, hy, t, size=1.04, tilt=tilt, eyes="happy", pupil=pupil,
         gaze=(2.0, 0.5), mouth="closed", ears="relaxed", blush=False, profile=0.0,
     )
+
+
+# ---------------------------------------------------------------------------
+# 9. Peek (curiously peeking head & dainty white paws over a window edge!)
+# ---------------------------------------------------------------------------
+def draw_peek(r, t: float, pupil: float):
+    """Adorable Kömür peeking curiously over a window edge with paws gripping the ledge."""
+    g = r.GROUND
+    bob = math.sin(t * 1.9) * 3.0
+    tilt = math.sin(t * 1.1) * 4.2
+    # Soft dark plush shoulders tucked just behind the ledge line
+    r._poly(
+        [(76, g + 2), (82, 232 + bob), (128, 226 + bob), (176, 232 + bob), (182, g + 2)],
+        r._coat, "", 1, smooth=True,
+    )
+    # Fluffy snow-white tuxedo chest ruff peeking just above the ledge
+    r._bib(
+        [(94, 238 + bob), (164, 238 + bob), (156, g - 1), (102, g - 1)],
+        tufts=3,
+    )
+    # Big adorable curious Kömür head peeking up over the edge!
+    lid = r._blink_amount(t, allow_slow=True)
+    gaze = (math.sin(t * 0.9) * 3.5, 0.8 + math.cos(t * 0.6) * 0.8)
+    r._head(
+        128.0, 212.0 + bob, t, size=1.05, tilt=tilt,
+        eyes="open", pupil=max(pupil, 0.72), gaze=gaze, lid=lid,
+        mouth="closed", ears="forward", profile=0.0,
+    )
+    # Two dainty snow-white paws gripping the ledge beside the chin!
+    r._sock(82, g - 3.5 + bob * 0.2, 13.5, 7.2, toes=True, forward=1.0)
+    r._sock(174, g - 3.5 + bob * 0.2, 13.5, 7.2, toes=True, forward=-1.0)
+
+
+# ---------------------------------------------------------------------------
+# 10. Notch Peek (macOS MacBook çentiğinden aşağı bakan tatlı Kömür!)
+# ---------------------------------------------------------------------------
+def draw_notch_peek(r, t: float, pupil: float):
+    """Kömür hangs flush right below the MacBook Notch (y=0 touches the notch rim!)."""
+    bob = math.sin(t * 1.8) * 1.6
+    tilt = math.sin(t * 1.0) * 4.5
+    sway = math.sin(t * 2.1) * 14.0
+    # Playful tail emerging directly from behind the right side of the notch (y=0)
+    tail = [
+        (182, 0),
+        (198 + sway * 0.35, 28),
+        (202 + sway * 0.75, 58),
+        (188 + sway, 84),
+    ]
+    r._tail(tail, widths=(13.5, 12.2, 10.8, 9.0))
+    # Plush dark shoulders emerging seamlessly out of the black MacBook Notch (y=0)
+    r._poly(
+        [(84, 0), (172, 0), (168, 72 + bob), (128, 86 + bob), (88, 72 + bob)],
+        r._coat, "", 1, smooth=True,
+    )
+    # Cozy snow-white tuxedo chest bib tucked neatly under the chin (below the head!)
+    r._bib(
+        [(108, 66 + bob), (148, 66 + bob), (142, 84 + bob), (114, 84 + bob)],
+        tufts=3,
+    )
+    # Round adorable Kömür head peering right out from beneath the notch!
+    lid = r._blink_amount(t, allow_slow=True)
+    gaze = (math.sin(t * 0.85) * 3.8, 3.2 + math.cos(t * 0.6) * 0.8)
+    r._head(
+        128.0, 44.0 + bob, t, size=0.98, tilt=tilt,
+        eyes="open", pupil=max(pupil, 0.74), gaze=gaze, lid=lid,
+        mouth="closed", ears="forward", profile=0.0,
+    )
+    # Two dainty snow-white paws gripping the notch's bottom rim beside the ears!
+    r._sock(74, 7.0 + bob * 0.15, 13.0, 7.0, toes=True, forward=1.0)
+    r._sock(182, 7.0 + bob * 0.15, 13.0, 7.0, toes=True, forward=-1.0)

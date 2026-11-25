@@ -1,8 +1,8 @@
 # Kömür — Masaüstü Kedisi (macOS & Windows)
 
-**Onur Can Orhan · Sürüm 2.3.0 · macOS (Apple Silicon) & Windows 10/11 (x64)**
+**Onur Can Orhan · Sürüm 2.4.0 · macOS (Apple Silicon) & Windows 10/11 (x64)**
 
-Kömür, gerçek siyah-beyaz smokin kedi Kömür'den ilham alınarak Python ve Tkinter ile geliştirilmiş, masaüstünde yaşayan hafif ve gerçekçi bir kedi arkadaştır. Hiçbir harici AI modeli veya ağır bağımlılık gerektirmez; pencerelerinin üstüne tüner, karton kutunun içine girip uyuklar, süt içer, tırmalama tahtasını tırmalar, yaptığın etkinliğe sakin tepkiler verir ve gerçek kedi sesleriyle eşlik eder.
+Kömür, gerçek siyah-beyaz smokin kedi Kömür'den ilham alınarak Python ve Tkinter ile geliştirilmiş, masaüstünde yaşayan hafif ve gerçekçi bir kedi arkadaştır. Hiçbir harici AI modeli veya ağır bağımlılık gerektirmez; pencerelerinin veya MacBook çentiğinin üstüne tüner, karton kutunun içine girip uyuklar, tam ekran video izlerken üst katmanda kalıp köşede sessizce uyur, diğer uygulamaların odağını çalmadan etkileşim kurar ve pil dostu çalışır.
 
 ---
 
@@ -10,8 +10,9 @@ Kömür, gerçek siyah-beyaz smokin kedi Kömür'den ilham alınarak Python ve T
 
 | Platform | İndirme Paketi | Doğrulama | Gereksinimler |
 | --- | --- | --- | --- |
-| **🍎 macOS Sürümü (Apple Silicon)** | [Komur-2.3.0-macOS-arm64.zip](https://github.com/sushikiddo/komur/releases/download/v2.3.0/Komur-2.3.0-macOS-arm64.zip) | [SHA-256](https://github.com/sushikiddo/komur/releases/download/v2.3.0/Komur-2.3.0-macOS-arm64.zip.sha256) | macOS (M1–M5), Python gerekmez |
-| **🪟 Windows Sürümü (64-bit)** | [Komur-2.3.0-Windows-x64.exe](https://github.com/sushikiddo/komur/releases/download/v2.3.0/Komur-2.3.0-Windows-x64.exe) | [SHA-256](https://github.com/sushikiddo/komur/releases/download/v2.3.0/Komur-2.3.0-Windows-x64.exe.sha256) | Windows 10/11 x64, kurulum ve Python gerekmez |
+| **🍎 macOS Sürümü (Apple Silicon · DMG)** | [Komur-2.4.0-macOS-arm64.dmg](https://github.com/sushikiddo/komur/releases/download/v2.4.0/Komur-2.4.0-macOS-arm64.dmg) | [SHA-256](https://github.com/sushikiddo/komur/releases/download/v2.4.0/Komur-2.4.0-macOS-arm64.dmg.sha256) | macOS 13+ (M1–M5), Python gerekmez |
+| **🍎 macOS Sürümü (Apple Silicon · ZIP)** | [Komur-2.4.0-macOS-arm64.zip](https://github.com/sushikiddo/komur/releases/download/v2.4.0/Komur-2.4.0-macOS-arm64.zip) | [SHA-256](https://github.com/sushikiddo/komur/releases/download/v2.4.0/Komur-2.4.0-macOS-arm64.zip.sha256) | macOS 13+ (M1–M5), Python gerekmez |
+| **🪟 Windows Sürümü (64-bit)** | [Komur-2.4.0-Windows-x64.exe](https://github.com/sushikiddo/komur/releases/download/v2.4.0/Komur-2.4.0-Windows-x64.exe) | [SHA-256](https://github.com/sushikiddo/komur/releases/download/v2.4.0/Komur-2.4.0-Windows-x64.exe.sha256) | Windows 10/11 x64, kurulum ve Python gerekmez |
 
 - **Tüm sürümler:** [GitHub Releases](https://github.com/sushikiddo/komur/releases)
 - **Portfolyo sayfası:** [onurcanorhan.pages.dev/komur.html](https://onurcanorhan.pages.dev/komur.html)
@@ -19,34 +20,30 @@ Kömür, gerçek siyah-beyaz smokin kedi Kömür'den ilham alınarak Python ve T
 
 ---
 
-## v2.3.0 Yenilikleri (macOS & Windows)
+## v2.4.0 Yenilikleri (macOS & Windows)
 
-- **Gerçek Kömür'e göre yenilenmiş çizim ve 7 kürk teması:** Siyah pelüş yüz, iri sarı-yeşil parlak gözler, uzun beyaz bıyıklar ve kaş kılları, geniş kar beyazı göğüs önlüğü, beyaz pati uçları ve dolgun kuyruk (`komur`, `zencefil`, `gri`, `pamuk`, `gece`, `kahve`, `altin`).
-- **Gerçek kedi yürüyüşü ve doğal hareketler:** 3/4 profil baş, dolgun bacaklar ve 4 zamanlı gerçekçi yürüyüş döngüsü; patiyi yalayıp yanak/kulak yıkayan 3 aşamalı tımarlanma (`groom`); öne uzanıp beli çukurlaştıran gerçek gerinme (`stretch`); kıvrık dilli esneme (`yawn`) ve kuyruğa sarılı uyku (`sleep`).
-- **Tam animasyonlu masaüstü aktiviteleri:**
-  - **📦 Karton Kutu:** Kedi gerçekten kutunun içine girer, ön patilerini kenara yaslar ve bir süre sonra içine gömülüp uyuklar.
-  - **🪟 Pencereye Tüneme:** Aktif pencerenin üst kenarına zıplayıp kuyruğunu kenardan aşağı sarkıtarak tüner; pencere taşınınca birlikte gider.
-  - **🥛 Süt Kâsesi:** Eğilip pembe diliyle süt içer, süt halkası ve damlacıklar oluşur.
-  - **🪵 Tırmalama Tahtası:** Arka ayakları üzerinde dikilip iki ön patisiyle sırayla tırmalar.
-  - **🧶 İplik Yumağı:** Sürüklenip fırlatılabilen yumak, pencerelerden ve ekran kenarlarından seker.
-- **Gerçek kedi sesleri & tek tıkla sessize alma:** Sentetik sesler kaldırılıp özgür lisanslı gerçek kedi kayıtları eklendi. Top oynarken veya dolaşırken gürültü yapmaz — sesler yalnızca **sevince (mırlama)**, **esnerken** ve **uyanırken (yumuşak miyavlama)** çalar. Hızlı Menü'de tek tıkla **🔊 Ses Açık / 🔇 Ses Kapalı** ayarı bulunur.
-- **Sakin ve gerçekçi etkinlik tepkileri:** Tam ekran video/film izlerken altyazıyı kapatmadan alt köşeye çekilip sakin izler (abartılı çizgi-film efektleri kaldırıldı); müzikte hafif kulak/kuyruk ritmi yapar; boştan/uzaktan dönünce gerinip selamlar; yemek/süt sonrası kendiliğinden tımarlanır.
-- **Lazer modu kaldırıldı:** Sağ tık Hızlı Menü ve Kontrol Paneli sadeleştirildi.
+- **Fotoğraf sadakatinde gerçek Kömür & çevik kedi yürüyüşü:** İri badem sarı-yeşil gözler, kadife siyah yüz, bembeyaz bıyık/kaşlar, kar beyazı göğüs önlüğü, beyaz patiler ve hafif-çevik 4 zamanlı ev kedisi yürüyüşü (`feline_locomotion.py`, `cat_poses.py`, `renderer.py`).
+- **Odak çalmayan yüzen pencereler (`NonactivatingPanel` / `WS_EX_NOACTIVATE`):** Kömür'e tek tıkla sevmek, sürüklemek veya Hızlı Menü'yü açmak Chrome, VS Code ya da diğer açık uygulamaları arka plana atmaz.
+- **Tam ekran videoda üstte kal + köşede uyu:** Tam ekran YouTube/Netflix/VLC izlerken arka plana düşmez; en yakın alt köşeye süzülüp video bitene kadar sessizce uyur.
+- **MacBook Çentik (`Notch Peek`) & Dock etkileşimi:** Çentikli MacBook'larda üst çentikten aşağı bakan özel poz; çentik yakınına sürükleyip bırakınca tutunur. Menü çubuğunda **Çentikten Bak**, **Dock Üstünde Gez** ve canlı **🍅 Odak (Pomodoro)** sayacı yer alır.
+- **4 slotlu görsel Gardırop & 19 kıyafet/takı:** Baş, Göz, Boyun ve Gövde slotları aynı anda kombinlenebilir (ör. gözlük + atkı + şapka + kazak) ve Kontrol Paneli'nde görsel kartlarla seçilir (`wardrobe_ui.py`, `costumes.py`).
+- **Pil dostu uyarlanabilir FPS & güç yönetimi:** Pil modunda, uykuda veya boşta kare hızı ve çizim otomatik kısılır (`power.py`); düşük güç modunu ve batarya durumunu otomatik algılar.
+- **Özel uygulama simgesi & sürükle-bırak macOS DMG:** Özel tasarlanmış Kömür ikonu (`komur.icns` / `komur.ico`), sadeleştirilmiş paket boyutu (~34 MB) ve tek sürüklemeyle kurulan `.dmg` paketi.
 
 ---
 
 ## 🍎 macOS Sürümü (Apple Silicon)
 
 ### Kurulum
-1. `Komur-2.3.0-macOS-arm64.zip` dosyasını indirip çift tıklayarak açın.
-2. İçinden çıkan **Kömür.app** uygulamasını **Uygulamalar (`/Applications`)** klasörüne sürükleyin.
+1. `Komur-2.4.0-macOS-arm64.dmg` (veya `.zip`) dosyasını indirip açın.
+2. **Kömür.app** uygulamasını **Uygulamalar (`/Applications`)** klasörüne sürükleyin.
 3. Paket Apple Developer sertifikasıyla imzalanmadığı için ilk açılışta macOS uyarı verirse: **Kömür.app'e sağ tık → Aç** yolunu kullanın veya Terminal'de `xattr -dr com.apple.quarantine /Applications/Kömür.app` çalıştırın.
 
 ### macOS'a Özel İyileştirmeler
-- **Tam ekran filmlerin ve Spaces'ın üstünde kalır:** `kCGScreenSaverWindowLevel` + `FullScreenAuxiliary` desteği ile YouTube, Netflix, VLC, IINA tam ekranındayken kaybolmaz.
-- **Touchpad'de ilk seferde 2 parmak sağ tık:** Başka bir uygulama (Chrome, Safari, VS Code vb.) etkinken bile kedi üstüne tek seferde 2 parmakla tıklayarak (veya `Control+Tık`) Hızlı Menü'yü açabilirsiniz; odak değiştiren ilk sol tık yanlışlıkla "Sev" tetiklemez.
-- **Menü çubuğu simgesi:** Üst menü çubuğunda pati/kedi simgesi ile tek tıkla gizle/göster.
-- **Şeffaf gölgesiz pencere:** Core Image siyah anahtarlama (`CIColorCubeWithColorSpace`) ile gri kenar ve iz bırakmaz.
+- **Tam ekran filmlerin ve Spaces'ın üstünde kalır:** `kCGScreenSaverWindowLevel` + `FullScreenAuxiliary` desteği ile YouTube, Netflix, VLC, IINA tam ekranındayken kaybolmaz, en yakın alt köşeye çekilip uyur.
+- **Odak çalmayan tek tık & 2 parmak Hızlı Menü:** Yerel `NSPanel` (`NonactivatingPanel`) sayesinde Chrome veya başka bir uygulama etkinken Kömür'ü sevmek, sürüklemek ya da 2 parmakla Hızlı Menü'yü kullanmak aktif uygulamayı arka plana atmaz.
+- **MacBook Çentiği & Menü çubuğu:** Çentikten bakan özel poz (`notch_peek`), üst menü çubuğunda canlı Pomodoro geri sayımı ve tek tıkla gizle/göster.
+- **Şeffaf gölgesiz pencere & pil dostu motor:** Core Image siyah anahtarlama (`CIColorCubeWithColorSpace`) ve pilde uyarlanabilir FPS.
 - **Veri ve başlangıç:** Ayarlar `~/Library/Application Support/Komur` altında saklanır; "Oturum Açılınca Başlat" `~/Library/LaunchAgents/com.sushikiddo.komur.plist` kullanır.
 
 ---
@@ -54,7 +51,7 @@ Kömür, gerçek siyah-beyaz smokin kedi Kömür'den ilham alınarak Python ve T
 ## 🪟 Windows Sürümü (Windows 10/11 x64)
 
 ### Kurulum
-1. `Komur-2.3.0-Windows-x64.exe` dosyasını indirin ve doğrudan çalıştırın (kurulum veya Python gerekmez).
+1. `Komur-2.4.0-Windows-x64.exe` dosyasını indirin ve doğrudan çalıştırın (kurulum veya Python gerekmez).
 2. EXE kod imzalı olmadığı için Windows SmartScreen uyarısı çıkarsa **Ek bilgi → Yine de çalıştır** seçeneğini kullanın.
 3. İsteğe bağlı SHA-256 doğrulaması:
    ```powershell

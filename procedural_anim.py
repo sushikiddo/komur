@@ -408,7 +408,12 @@ class LayeredCostumes:
     """Draws layered costumes in head-local coordinates via CatRenderer helpers."""
 
     BASE_ACCESSORIES = (None, "bow", "scarf", "hat", "glasses")
-    NEW_COSTUMES = ("witch_hat", "winter_set", "cyberpunk_collar", "headphones")
+    _CORE_LAYERED = ("witch_hat", "winter_set", "cyberpunk_collar", "headphones")
+    try:
+        from costumes import EXTRA_COSTUMES as _EXTRA_COSTUMES
+    except Exception:
+        _EXTRA_COSTUMES = ()
+    NEW_COSTUMES = _CORE_LAYERED + _EXTRA_COSTUMES
     ALL_COSTUMES = BASE_ACCESSORIES + NEW_COSTUMES
 
     @classmethod
@@ -430,7 +435,11 @@ class LayeredCostumes:
         if kind == "headphones":
             cls._draw_headphones(renderer, shape, size, t)
             return True
-        return False
+        try:
+            from costumes import draw_extra_costume
+            return draw_extra_costume(renderer, kind, shape, size=size, t=t)
+        except Exception:
+            return False
 
     @staticmethod
     def _draw_witch_hat(r, shape, size: float):

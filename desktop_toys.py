@@ -142,7 +142,8 @@ class _ToyWindow:
         self.kind = kind
         self.w, self.h = SIZES[kind]
         self.x, self.y = float(x), float(y)      # pencere sol-üst
-        self.win = tk.Toplevel(master)
+        from window_utils import create_nonactivating_panel
+        self.win = create_nonactivating_panel(master)
         self.win.withdraw()
         self.win.title(f"Kömür — {LABELS.get(kind, kind)}")
         make_transparent(self.win)
@@ -303,7 +304,8 @@ class _LaserDotWindow:
         self._phase = 0.0
         self.x = 0.0
         self.y = 0.0
-        self.win = tk.Toplevel(master)
+        from window_utils import create_nonactivating_panel
+        self.win = create_nonactivating_panel(master)
         self.win.withdraw()
         self.win.title(self.TITLE)
         make_transparent(self.win, elevated=True)

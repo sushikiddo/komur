@@ -1,4 +1,4 @@
-﻿"""Best-effort, local activity reactions. No titles or metadata are retained."""
+"""Best-effort, local activity reactions. No titles or metadata are retained."""
 import json
 import os
 import queue
@@ -8,7 +8,7 @@ import threading
 import time
 
 from awareness import (ReactionPlanner, Stabilizer, active_game, browser_hint, classify_activity,
-                       media_kind)
+                       is_browser, media_kind)
 from context import _is_fullscreen, get_foreground_info, idle_seconds, mic_in_use_apps
 
 # Eski tek seferlik GSMTC sorgusu (geriye uyum); yeni yol MediaSessionClient.
@@ -214,6 +214,8 @@ class ActivityReactions:
 
     def __init__(self, interval=5, media_client=None, stable_samples=2):
         self.current = 'none'
+        self.is_fullscreen = False
+        self.fullscreen_video = False
         self.interval = interval
         self._last = float('-inf')
         self._worker = None
@@ -259,8 +261,21 @@ class ActivityReactions:
                     self._browser_memory = hint
                 media = media_kind(sessions, info, fullscreen, self._browser_memory)
             raw = classify_activity(info, media, idle, fullscreen, mic_in_use_apps(), playing)
+            # macOS'ta Ekran Kaydı izni olmadan tarayıcı sekme başlığı boş gelir; tam ekran tarayıcıda
+            # kullanıcı aktif yazı yazmıyorsa (video/film izliyorsa) video olarak algıla.
+            if (
+                sys.platform == 'darwin'
+                and fullscreen
+                and raw not in ('gaming', 'video', 'meeting')
+                and not active_game(info)
+            ):
+                proc = ((info or {}).get('process_name') or '').lower().strip()
+                if is_browser(proc) and idle >= 1.5:
+                    raw = 'video'
             if not self._enabled:
                 return
+            self.is_fullscreen = bool(fullscreen)
+            self.fullscreen_video = bool(fullscreen and raw == 'video')
             old = self.current
             self.current = self._stab.feed(raw)
             if self.current != old:

@@ -66,7 +66,7 @@ STATE_LABELS = {
     "bored": "Canı sıkılıyor", "roll": "Yerde yuvarlanıyor",
     "drink": "Süt içiyor", "eat": "Mama yiyor", "scratch": "Tırmalıyor",
     "jump": "Zıplıyor", "box_sit": "Kutuda oturuyor", "perch": "Pencerede tünüyor",
-    "laser_chase": "Lazer kovalıyor",
+    "peek": "Pencereden bakıyor", "notch_peek": "Çentikten bakıyor", "laser_chase": "Lazer kovalıyor",
 }
 
 # 100+ konuşma baloncuğu mesajı — gezirken, boşken, PC aktivite yorumları
@@ -190,7 +190,14 @@ class DesktopCat:
     def __init__(self, root=None, options=None):
         self.options = options
         self.settings = Settings.load()
-        self.root = root or tk.Tk()
+        self._tk_host = None
+        if root is None and IS_MAC:
+            self._tk_host = tk.Tk()
+            self._tk_host.withdraw()
+            self._tk_host.report_callback_exception = self._callback_error
+            self.root = window_utils.create_nonactivating_panel(self._tk_host, name="komur_cat")
+        else:
+            self.root = root or tk.Tk()
         self.root.title("Kömür")
         self.root.withdraw()
         self.root.report_callback_exception = self._callback_error
@@ -313,9 +320,25 @@ class DesktopCat:
         window_utils.ensure_floating(self.root)
         self._apply_opacity()
 
+        self._apply_window_icon()
         self.tray = Tray(tooltip=f"{self.settings.get('name')} — Kömür")
         if hasattr(self.tray, "attach_tk"):
             self.tray.attach_tk(self.root, on_toggle_hide=self.toggle_boss_key)
+        self.updater_flow = None
+        try:
+            from update_ui import UpdateFlow
+            self.updater_flow = UpdateFlow(self)
+        except Exception:
+            logging.debug("UpdateFlow init failed", exc_info=True)
+        self.power_monitor = None
+        try:
+            from power import PowerMonitor
+            self.power_monitor = PowerMonitor()
+        except Exception:
+            logging.debug("PowerMonitor init failed", exc_info=True)
+        self._last_placed_geom = None
+        self._pointer_active_until = 0.0
+        self._paused_drawn = False
         self._register_hotkey()
         self._rebuild_companions()
         self.bubble = SpeechBubble(self.root)
@@ -720,8 +743,8 @@ class DesktopCat:
                 physics.surface = "ground"
         self._was_perched = False
 
-    def perch_active_window(self, quiet=False):
-        """Jump onto the top edge of the active foreground window."""
+    def perch_active_window(self, quiet=False, peek=False):
+        """Jump onto the top edge of the active foreground window (perch or cute peek)."""
         if getattr(self, "physics", None) is None:
             return False
         self._stop_laser()
@@ -735,6 +758,7 @@ class DesktopCat:
             return False
         if getattr(self, "toybox", None) is not None and self.toybox.box_until:
             self.toybox.exit_box()
+        self._perch_peek_pending = bool(peek)
         self.physics.x, self.physics.y = self.brain.x, self.brain.y
         ok = self.physics.perch_on_window(rect, cat_x=self.brain.x, hwnd=hwnd, animate=True)
         if ok:
@@ -750,27 +774,73 @@ class DesktopCat:
                 self.brain._change("jump", duration=self.physics.JUMP_SECONDS + 0.2)
             else:
                 self.brain._change("perch", duration=15.0)
+                if self._perch_peek_pending:
+                    self.brain.visual_pose = "peek"
+                    self.brain.visual_pose_duration = 12.0
+                    self._perch_peek_pending = False
             self._apply_position()
             if not quiet:
-                self.say("Pencere tepesine zıpladım! 🐾", 4)
+                self.say("Pencere kenarından bakıyorum! 👀" if peek else "Pencere tepesine zıpladım! 🐾", 4)
         return ok
 
+    def peek_active_window(self, quiet=False):
+        """Peek curiously over the top edge of the active window."""
+        return self.perch_active_window(quiet=quiet, peek=True)
+
+    def perch_notch(self, quiet=False):
+        """MacBook çentiğinin hemen altından patileriyle tutunup aşağı bak (çentik yoksa pencereden bak)."""
+        notch = window_utils.mac_notch_rect() if IS_MAC else None
+        if notch is None:
+            return self.peek_active_window(quiet=quiet)
+        self._stop_laser()
+        self._stop_perch()
+        self._video_corner_sleep = False
+        nl, _nt, nr, nb = notch
+        cx = round((nl + nr - self.w) * 0.5)
+        cy = max(0, nb)   # Tk aqua üst sınırı menü/çentik alt kenarına (nb) tam sıfır oturur
+        self._notch_perched = True
+        self._notch_until = time.monotonic() + 25.0
+        self.brain.move_to(cx, cy)
+        self.brain.x, self.brain.y = float(cx), float(cy)
+        self.brain.home_x, self.brain.home_y = float(cx), float(cy)
+        self.brain._change("perch", duration=25.0)
+        self.brain.visual_pose = "notch_peek"
+        self.brain.visual_pose_duration = 25.0
+        self._apply_position()
+        window_utils.ensure_topmost_now(self.root)
+        if not quiet:
+            self.say("Çentikten aşağı bakıyorum! 👀", 4)
+        return True
+
+    def _release_notch_perch(self):
+        if not getattr(self, "_notch_perched", False):
+            return
+        self._notch_perched = False
+        self._notch_until = 0.0
+        if getattr(self.brain, "visual_pose", None) == "notch_peek":
+            self.brain.visual_pose = None
+            self.brain.visual_pose_duration = 0.0
+        area = self.areas[self.area_index]
+        self.brain.home_y = max(area.top, area.bottom - self.h)
+
     def walk_on_taskbar_cmd(self):
-        """Move the cat down onto the top edge of the Windows taskbar."""
+        """Move the cat down onto the top edge of the Windows taskbar or macOS Dock."""
         if getattr(self, "physics", None) is None:
             return False
         self._stop_laser()
         self._stop_perch()
+        self._release_notch_perch()
         tb = window_utils.taskbar_rect()
         if tb is None:
-            self.say("Görev çubuğu bulunamadı.", 3)
+            self.say("Dock bulunamadı." if IS_MAC else "Görev çubuğu bulunamadı.", 3)
             return False
         ok = self.physics.walk_on_taskbar(tb, cat_x=self.brain.x)
         if ok:
             self.brain.x, self.brain.y = self.physics.x, self.physics.y
+            self.brain.home_x, self.brain.home_y = self.physics.x, self.physics.y
             self.brain.rest()
             self._apply_position()
-            self.say("Görev çubuğuna indim!", 4)
+            self.say("Dock üstüne indim! 🐾" if IS_MAC else "Görev çubuğuna indim!", 4)
         return ok
 
     def toggle_retro_mode(self):
@@ -852,11 +922,59 @@ class DesktopCat:
                 self.say(msg, 8)
         return results
 
+    def _apply_window_icon(self):
+        """Apply Kömür's custom icon to Tk windows (panel, dialogs, taskbar)."""
+        try:
+            base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+            png = base / "assets" / "komur_icon_64.png"
+            if png.is_file():
+                self._app_icon_img = tk.PhotoImage(file=str(png), master=self.root)
+                self.root.iconphoto(True, self._app_icon_img)
+            if IS_WINDOWS:
+                ico = base / "assets" / "komur.ico"
+                if ico.is_file():
+                    self.root.iconbitmap(default=str(ico))
+        except Exception:
+            logging.debug("App icon setup skipped", exc_info=True)
+
+    def check_updates_now(self):
+        """Manually check GitHub Releases for a newer Kömür version."""
+        flow = getattr(self, "updater_flow", None)
+        if flow is not None:
+            flow.check(silent=False)
+
     def _poll_tray(self):
         if not getattr(self, "tray", None):
             return
         if self.tray.poll_show():
             self.show_panel()
+        if hasattr(self.tray, "poll_action"):
+            while True:
+                action = self.tray.poll_action()
+                if not action:
+                    break
+                if action == "feed":
+                    self.command("feed")
+                elif action == "toggle_sound":
+                    self.toggle_sound()
+                elif action == "peek":
+                    self.peek_active_window()
+                elif action == "notch":
+                    self.perch_notch()
+                elif action == "dock":
+                    self.walk_on_taskbar_cmd()
+                elif action == "toggle_focus":
+                    self.toggle_focus()
+                elif action == "toggle_hide":
+                    self.toggle_boss_key()
+                elif action == "check_update":
+                    self.check_updates_now()
+        flow = getattr(self, "updater_flow", None)
+        if flow is not None:
+            try:
+                flow.poll()
+            except Exception:
+                logging.debug("UpdateFlow poll failed", exc_info=True)
         if self.tray.poll_quit():
             self.close()
 
@@ -891,15 +1009,35 @@ class DesktopCat:
         events = self.focus.tick(now)
         for event in events:
             self.say(MESSAGES[event], 8)
-            if event == "work_done" and getattr(self, "affection", None) is not None:
-                try:
-                    self.affection.record_action("pomodoro")
-                except Exception:
-                    logging.debug("Affection pomodoro XP failed", exc_info=True)
+            if event in ("break_started", "long_break_started", "session_finished"):
+                done_count = int(self.settings.get("focus_sessions_completed", 0) or 0) + 1
+                self.settings.set("focus_sessions_completed", done_count)
+                if getattr(self, "affection", None) is not None:
+                    try:
+                        prev_lvl = getattr(self.affection, "level", 1)
+                        self.affection.record_action("pomodoro")
+                        new_lvl = getattr(self.affection, "level", prev_lvl)
+                        self.settings.update(
+                            affection_xp=getattr(self.affection, "xp", 0),
+                            affection_level=new_lvl,
+                        )
+                        if new_lvl > prev_lvl:
+                            self.say(f"Harika odak! Seviye {new_lvl} oldun, yeni ödüller açıldı! 🎉", 9)
+                    except Exception:
+                        logging.debug("Affection pomodoro XP failed", exc_info=True)
         if events:
             state = phase_to_cat_state(self.focus.phase)
             if state:
                 self.brain.settle(state)
+        tray = getattr(self, "tray", None)
+        if tray is not None and hasattr(tray, "update_focus_label"):
+            if self.focus.phase in ("work", "break"):
+                rem = int(round(self.focus.remaining(now)))
+                mins, secs = divmod(max(0, rem), 60)
+                phase_txt = "Odak" if self.focus.phase == "work" else "Mola"
+                tray.update_focus_label(f"🍅 {phase_txt}: {mins:02d}:{secs:02d} (Durdur)")
+            else:
+                tray.update_focus_label("🍅 Odak Başlat (25 dk)")
 
     def say(self, text, seconds):
         self.message = text
@@ -1073,7 +1211,10 @@ class DesktopCat:
             or (time.monotonic() - getattr(self, "_last_menu_toggle", -10.0) < 0.35)
         ):
             return
-        self._pressed_while_active = window_utils.last_left_click_was_active() and window_utils.mac_app_is_active()
+        if window_utils.is_nonactivating_panel(self.root):
+            self._pressed_while_active = True
+        else:
+            self._pressed_while_active = window_utils.last_left_click_was_active() and window_utils.mac_app_is_active()
         self._pressed_hud_was_open = bool(getattr(getattr(self, "context_hud", None), "visible", False))
         self.drag_origin = (event.x_root, event.y_root, self.brain.x, self.brain.y)
         self.dragged = False
@@ -1096,6 +1237,9 @@ class DesktopCat:
                 phys.surface = "ground"
             if getattr(self, "toybox", None) is not None and self.toybox.box_until:
                 self.toybox.exit_box()
+            if getattr(self, "_notch_perched", False):
+                self._release_notch_perch()
+            self._video_corner_sleep = False
             self.brain.move_to(x + dx, y + dy)
             self._apply_position()
 
@@ -1108,6 +1252,15 @@ class DesktopCat:
         self._pressed_while_active = True
         self._pressed_hud_was_open = False
         if self.dragged:
+            # MacBook çentiğinin hemen yakınına bırakıldıysa çentiğe tutun!
+            if IS_MAC:
+                notch = window_utils.mac_notch_rect()
+                if notch is not None:
+                    nl, _nt, nr, nb = notch
+                    cat_cx = self.brain.x + self.w * 0.5
+                    if (nl - 45) <= cat_cx <= (nr + 45) and self.brain.y <= nb + 48:
+                        self.perch_notch(quiet=False)
+                        return
             self.brain.rest()  # birakilan yer yeni yuva (move_to ayarladi)
             self.say("Burayı sevdim!", 5)
             return
@@ -1125,7 +1278,9 @@ class DesktopCat:
 
     def _show_menu(self, event):
         now = time.monotonic()
-        if now - getattr(self, "_last_menu_toggle", -10.0) < 0.20:
+        if IS_MAC:
+            window_utils.consume_mac_click_counters()
+        if now - getattr(self, "_last_menu_toggle", -10.0) < 0.35:
             return
         self._last_menu_toggle = now
         self.drag_origin = None
@@ -1193,7 +1348,8 @@ class DesktopCat:
         self.brain.set_bounds(self._movement_bounds(area, self.w, self.h))
         self.root.geometry(f"{self.w}x{self.h}+{round(self.brain.x)}+{round(self.brain.y)}")
         self.root.update_idletasks()
-        self._apply_position()
+        self._last_placed_geom = None
+        self._apply_position(force=True)
 
     def _rebuild_companions(self):
         for mate in self.companions:
@@ -1244,21 +1400,40 @@ class DesktopCat:
     def _movement_bounds(area, w=WIDTH, h=HEIGHT):
         return movement_bounds(area, w, h)
 
-    def _apply_position(self):
+    def _apply_position(self, force=False):
+        geom = (round(self.brain.x), round(self.brain.y), self.w, self.h)
+        if not force and geom == getattr(self, "_last_placed_geom", None):
+            return
+        self._last_placed_geom = geom
         place_window(self.root, self.brain.x, self.brain.y, self.w, self.h)
 
     # -- main loop --------------------------------------------------------
     def _loop(self):
         if self.closed:
             return
+        next_delay_ms = 22
         try:
             now = time.monotonic()
-            dt = max(0, min(now - self.last_time, 0.1))
+            dt = max(0.0, min(now - self.last_time, 0.35))
             self.last_time = now
             self._poll_hotkey()
             self._poll_tray()
             if self.closed:
                 return
+            power_status = None
+            power_mon = getattr(self, "power_monitor", None)
+            if power_mon is not None:
+                power_status = power_mon.poll()
+            power_saver_on = bool(self.settings.get("power_saver", True))
+            on_battery_saving = bool(
+                power_saver_on and power_status is not None
+                and (power_status.on_battery or power_status.low_power_mode)
+            )
+            self.renderer.low_power = on_battery_saving
+            for mate in self.companions:
+                mate_r = getattr(mate, "renderer", None)
+                if mate_r is not None:
+                    mate_r.low_power = on_battery_saving
             if IS_MAC and not self.hidden:
                 window_utils.poll_mac_right_clicks(pointer_position(self.root))
             self._tick_focus(now)
@@ -1303,6 +1478,7 @@ class DesktopCat:
                 self.brain.vx = (self.brain.x - old_x) * inv_dt
                 self.brain.vy = (self.brain.y - old_y) * inv_dt
                 self.brain.pointer_xy = pointer
+                self._track_pointer_alertness(dt, pointer, now)
                 self.effect_orchestrator.cat_screen_x = self.brain.x + self.w / 2
                 area = self.areas[self.area_index]
                 self.effect_orchestrator.screen_w = max(1.0, area.right - area.left)
@@ -1329,28 +1505,72 @@ class DesktopCat:
                 self.bubble.update_position(self.brain.x, self.brain.y, self.w)
             self._bubble_message = message
             self.bubble.tick(now)
-            self.renderer.accessory = self.settings.get("accessory")
+            acc_slots = self.settings.get("accessories")
+            self.renderer.accessory = acc_slots if (isinstance(acc_slots, dict) and acc_slots) else self.settings.get("accessory")
             self.renderer.time_of_day = self._time_of_day(now)
             if hasattr(self.renderer, "set_retro_mode"):
                 self.renderer.set_retro_mode(bool(self.settings.get("retro_mode", False)))
             self.brain.age_days = float(self.settings.get("age_days", 7.0))
             if not self.hidden:
-                self.renderer.draw(
-                    self.brain, self.animation_time, message=message,
-                    effect_orchestrator=self.effect_orchestrator,
+                should_draw = (
+                    not self.brain.paused
+                    or not getattr(self, "_paused_drawn", False)
+                    or self.drag_origin is not None
                 )
+                if should_draw:
+                    self.renderer.draw(
+                        self.brain, self.animation_time, message=message,
+                        effect_orchestrator=self.effect_orchestrator,
+                    )
+                    self._paused_drawn = bool(self.brain.paused)
+            else:
+                self._paused_drawn = False
             self._frames += 1
-            if IS_MAC and not self.hidden and now - getattr(self, "_last_mac_chrome", 0.0) >= 2.5:
-                self._last_mac_chrome = now
-                window_utils._mac_apply_window_chrome(order_front=True)
+            if not self.hidden:
+                # Tam ekran video veya Space değişiminde arka plana düşmeyi önle (macOS & Windows)
+                fs_now = bool(getattr(self.activity_reactions, "is_fullscreen", False))
+                fs_video = bool(getattr(self.activity_reactions, "fullscreen_video", False))
+                prev_fs = getattr(self, "_last_seen_fullscreen", False)
+                self._last_seen_fullscreen = fs_now
+                space_gap = 1.2 if IS_MAC else 3.0
+                if now - getattr(self, "_last_space_check", 0.0) >= space_gap:
+                    self._last_space_check = now
+                    off_space = IS_MAC and not window_utils.mac_windows_on_active_space()
+                    if off_space or (fs_now and not prev_fs) or fs_video:
+                        window_utils.ensure_topmost_now(self.root)
+                        self._last_mac_chrome = now
+                chrome_gap = 8.0 if on_battery_saving else 4.0
+                if IS_MAC and now - getattr(self, "_last_mac_chrome", 0.0) >= chrome_gap:
+                    self._last_mac_chrome = now
+                    window_utils._mac_apply_window_chrome(order_front=True)
+                self._maintain_video_corner_sleep(now)
+                if getattr(self, "_notch_perched", False) and now >= getattr(self, "_notch_until", 0.0):
+                    self._release_notch_perch()
+                    self.brain.rest()
             if self._frames % 20 == 0:
                 self._refresh_status()
+            try:
+                from power import frame_interval_ms
+                next_delay_ms = frame_interval_ms(
+                    self.brain.state,
+                    status=power_status,
+                    enabled=power_saver_on,
+                    hidden=self.hidden,
+                    paused=self.brain.paused,
+                    dragging=(self.drag_origin is not None),
+                    pointer_active=(
+                        now < getattr(self, "_pointer_active_until", 0.0)
+                        or bool(getattr(getattr(self, "context_hud", None), "visible", False))
+                    ),
+                )
+            except Exception:
+                next_delay_ms = 22
         except Exception:
             logging.exception("Animation frame failed")
             self.say("Bir çizim sorunu oluştu; yeniden deneniyor.", 2)
         finally:
             if not self.closed:
-                self.after_id = self.root.after(16, self._loop)
+                self.after_id = self.root.after(next_delay_ms, self._loop)
 
     def _step_v2_subsystems(self, dt, pointer, now):
         """Advance v2.0 physics, fish pond, health guard, and periodic sensors safely."""
@@ -1441,6 +1661,10 @@ class DesktopCat:
                                 if was_jumping:
                                     self.brain.home_x, self.brain.home_y = px, py
                                     self.brain._change("perch", duration=15.0)
+                                    if getattr(self, "_perch_peek_pending", False):
+                                        self.brain.visual_pose = "peek"
+                                        self.brain.visual_pose_duration = 12.0
+                                        self._perch_peek_pending = False
                     perched = bool(self.physics.perched)
                     if getattr(self, "_was_perched", False) and not perched:
                         # düştü/indi: yuva yeniden zemine ve perch pozu sonlandır
@@ -1468,11 +1692,14 @@ class DesktopCat:
             except Exception:
                 logging.debug("TodoFishPond step failed", exc_info=True)
 
-        if getattr(self, "health_guard", None) is not None:
+        if getattr(self, "health_guard", None) is not None and self.settings.get("health_reminders", True):
             try:
                 reminder = self.health_guard.step(dt, is_working=True, pointer=pointer, now=now)
-                if reminder and self.settings.get("speech_bubbles", True):
-                    self.say_unsolicited(reminder["message"], 8)
+                if reminder:
+                    if not self.brain.paused and self.brain.state in ("sit", "look", "wander"):
+                        self.brain.settle("stretch")
+                    if self.settings.get("speech_bubbles", True):
+                        self.say_unsolicited(reminder["message"], 8)
             except Exception:
                 logging.debug("HealthWaterGuard step failed", exc_info=True)
 
@@ -1491,22 +1718,48 @@ class DesktopCat:
                 except Exception:
                     logging.debug("HardwareMind poll failed", exc_info=True)
 
-    def _glide_to_video_corner(self) -> bool:
+    def _glide_to_video_corner(self, *, for_sleep: bool = False) -> bool:
         """Video izlerken altyazıları kapatmamak için en yakın alt köşeye yumuşakça geç."""
+        self._release_notch_perch()
         phys = getattr(self, "physics", None)
-        if phys is not None and (phys.perched or phys.falling or phys.chasing_laser):
+        if phys is not None:
+            if phys.perched:
+                self._stop_perch()
+            elif phys.falling or phys.chasing_laser:
+                return False
+        if self.brain.paused or self.brain.state in ("follow", "play", "box_sit", "drink", "eat", "scratch"):
             return False
-        if self.brain.paused or self.brain.state in ("follow", "play", "sleep", "box_sit", "drink", "eat", "scratch"):
+        if self.brain.state == "sleep" and not for_sleep:
             return False
         area = self.areas[self.area_index]
-        left_x = area.left + 18
-        right_x = max(area.left, area.right - self.w - 18)
-        bottom_y = max(area.top, area.bottom - self.h - 14)
+        left_x = area.left + 14
+        right_x = max(area.left, area.right - self.w - 14)
+        bottom_y = max(area.top, area.bottom - self.h - 10)
         corner_x = right_x if self.brain.x >= (left_x + right_x) * 0.5 else left_x
         self.brain.home_x, self.brain.home_y = corner_x, bottom_y
         if math.hypot(corner_x - self.brain.x, bottom_y - self.brain.y) > 40.0:
             return bool(self.brain.go_to(corner_x, bottom_y))
         return False
+
+    def _maintain_video_corner_sleep(self, now: float):
+        """Tam ekran video izlerken Kömür'ü üstte tutup en yakın alt köşede sakinçe uyut."""
+        ar = getattr(self, "activity_reactions", None)
+        fs_video = bool(getattr(ar, "fullscreen_video", False)) or (
+            getattr(ar, "current", "none") == "video" and bool(getattr(ar, "is_fullscreen", False))
+        )
+        if fs_video and now >= getattr(self, "_manual_reaction_until", 0.0) and not self.brain.paused:
+            if not getattr(self, "_video_corner_sleep", False):
+                self._video_corner_sleep = True
+                window_utils.ensure_topmost_now(self.root)
+                if not self._glide_to_video_corner(for_sleep=True):
+                    self.brain.settle("sleep")
+            elif not getattr(self.brain, "_goal", False) and self.brain.state != "sleep":
+                if self.brain.state not in ("follow", "play", "drink", "eat", "scratch", "box_sit"):
+                    self.brain.settle("sleep")
+        elif getattr(self, "_video_corner_sleep", False) and not fs_video:
+            self._video_corner_sleep = False
+            if self.brain.state == "sleep":
+                self.brain.settle("stretch")
 
     def _maybe_post_meal_groom(self, prev_state: str):
         """Mama veya süt sonrası gerçek bir kedi gibi kısa bir pati temizleme (groom) yap."""
@@ -1545,7 +1798,42 @@ class DesktopCat:
                 return
         except Exception:
             return
-        self.perch_active_window(quiet=True)
+        if IS_MAC and window_utils.mac_notch_rect() is not None and random.random() < 0.25:
+            self.perch_notch(quiet=True)
+            return
+        self.perch_active_window(quiet=True, peek=(random.random() < 0.45))
+
+    def _track_pointer_alertness(self, dt: float, pointer, now: float):
+        """React organically when the mouse cursor wiggles fast near Kömür (wide pupils & ear alert)."""
+        if pointer is None or self.brain.paused or self.hidden:
+            self._prev_pointer = None
+            return
+        try:
+            px, py = float(pointer[0]), float(pointer[1])
+        except (TypeError, ValueError, IndexError):
+            return
+        prev = getattr(self, "_prev_pointer", None)
+        self._prev_pointer = (px, py)
+        if prev is None or dt <= 1e-4:
+            return
+        speed = math.hypot(px - prev[0], py - prev[1]) / dt
+        head_x = self.brain.x + self.w * 0.5
+        head_y = self.brain.y + self.h * 0.40
+        dist = math.hypot(px - head_x, py - head_y)
+        if dist < 280.0 and speed > 28.0:
+            self._pointer_active_until = now + 1.4
+        alert_until = float(getattr(self, "_pointer_alert_until", 0.0) or 0.0)
+        if dist < 220.0 and speed > 480.0 and self.brain.state in ("sit", "look", "perch"):
+            self._pointer_alert_until = now + 1.6
+            self.brain.pupil_dilation = 0.96
+            if dist < 135.0 and speed > 920.0 and now >= float(getattr(self, "_pointer_pounce_cd", 0.0) or 0.0):
+                self._pointer_pounce_cd = now + 14.0
+                if abs(px - head_x) > 10.0:
+                    self.brain.facing = 1 if px > head_x else -1
+                if self.brain.state == "sit":
+                    self.brain._change("look", duration=2.4)
+        elif now >= alert_until and getattr(self.brain, "pupil_dilation", None) is not None:
+            self.brain.pupil_dilation = None
 
     def _apply_activity_reaction(self, now):
         """Algılanan etkinlik değiştiğinde bir kez: sakin bir duruma geç, seyrek kısa mesaj."""
@@ -1561,8 +1849,12 @@ class DesktopCat:
             if self._sound_enabled():
                 self._play_cat_sound("chirp", volume=int(self.settings.get("sound_volume", 70) or 70))
         elif reaction.get("class") == "video":
-            if not self._glide_to_video_corner():
-                self.brain.settle("sit")
+            window_utils.ensure_topmost_now(self.root)
+            is_fs = bool(getattr(self.activity_reactions, "is_fullscreen", False))
+            if is_fs:
+                self._video_corner_sleep = True
+            if not self._glide_to_video_corner(for_sleep=is_fs):
+                self.brain.settle("sleep" if is_fs else "sit")
         else:
             state = {"loaf": "sit", "watch": "sit"}.get(reaction.get("state"), reaction.get("state"))
             self.brain.settle(state)
@@ -1624,6 +1916,12 @@ class DesktopCat:
                 pass
         self.bubble.destroy()
         self.root.destroy()
+        if getattr(self, "_tk_host", None) is not None:
+            try:
+                self._tk_host.destroy()
+            except tk.TclError:
+                pass
+            self._tk_host = None
 
     def run(self):
         self.root.mainloop()

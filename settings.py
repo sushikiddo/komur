@@ -37,7 +37,8 @@ DEFAULTS = {
     "speech_interval": 3600,      # otomatik konuşma: kapalı (sadece etkileşim)
     "speech_on_wander": False,    # gezirken otomatik konuşma kapalı
     "greeting_on_start": True,    # program açılışında selamla
-    "accessory": None,            # None | bow | scarf | hat | glasses
+    "accessory": None,            # None | legacy tek aksesuar anahtarı
+    "accessories": {},            # v2.5 4-slotlu kombin gardırop: {head, eyes, neck, body}
     "day_night": True,            # saate göre gece/akşam tonu
     "user_plugins_enabled": False,  # %LOCALAPPDATA%\Komur\plugins yüklensin mi
     "habit_memory": True,         # alışkanlık sayacı + tek seferlik öneriler
@@ -53,6 +54,9 @@ DEFAULTS = {
     "affection_level": 1,         # v2.0 dostluk seviyesi
     "weather_enabled": False,     # v2.2 gerçek hava durumu (açıkken şehir adı Open-Meteo'ya gider)
     "weather_city": "",
+    "power_saver": True,          # v2.4 pil tasarrufu: bataryada/uykuda uyarlamalı düşük FPS
+    "health_reminders": True,     # v2.5 opsiyonel su iç / gerin hatırlatıcısı
+    "focus_sessions_completed": 0, # v2.5 tamamlanan odak (Pomodoro) seansı sayısı
 }
 
 SIZE_SCALES = {"small": 0.55, "normal": 1.0, "large": 1.3, "xlarge": 1.6}

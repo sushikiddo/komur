@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import random
 import types
 try:
     import tkinter as tk
@@ -19,7 +20,8 @@ from window_utils import (
 )
 
 SOCIAL_DISTANCE = 90.0
-SOCIAL_INTERACTIONS = ("mutual_groom", "pass_ball", "cuddle_sleep")
+SOCIAL_APPROACH_DISTANCE = 420.0
+SOCIAL_INTERACTIONS = ("mutual_groom", "pass_ball", "cuddle_sleep", "play_chase")
 
 
 def _extract_brain_and_center(cat_or_brain):
@@ -108,6 +110,11 @@ def apply_social_interaction(cat_a, cat_b, dt: float = 0.016, interaction: str |
         brain_b.ball_vx = -direction * 85.0
         brain_a.emote = "!"
         brain_b.emote = "!"
+    elif mode == "play_chase":
+        brain_a.state = "play"
+        brain_b.state = "wander"
+        brain_a.emote = "!"
+        brain_b.emote = "!"
     elif mode == "cuddle_sleep":
         brain_a.state = "sleep"
         brain_b.state = "sleep"
@@ -147,7 +154,8 @@ class Companion:
                  start_pos=None, on_menu=None, index=0):
         self.w = round(WIDTH * scale)
         self.h = round(HEIGHT * scale)
-        self.window = tk.Toplevel(root)
+        from window_utils import create_nonactivating_panel
+        self.window = create_nonactivating_panel(root)
         self.window.withdraw()
         title = "Kömür — Arkadaş" if index == 0 else f"Kömür — Arkadaş {index + 1}"
         self.window.title(title)
@@ -166,6 +174,7 @@ class Companion:
         self.social_state = None
         self.social_partner = None
         self._ball_pass_phase = 0.0
+        self._social_approach_cd = random.uniform(18.0, 34.0)
         self._drag_origin = None
         self._dragged = False
         self._pressed_while_active = True
@@ -219,7 +228,11 @@ class Companion:
         elif pressed_active:
             self.brain.command("pet")
 
-    def _apply_position(self):
+    def _apply_position(self, force=False):
+        geom = (round(self.brain.x), round(self.brain.y), self.w, self.h)
+        if not force and geom == getattr(self, "_last_placed_geom", None):
+            return
+        self._last_placed_geom = geom
         place_window(self.window, self.brain.x, self.brain.y, self.w, self.h)
 
     def set_opacity(self, value):
@@ -243,6 +256,19 @@ class Companion:
                 default=None,
             )
             if nearest is not None:
+                dist = cat_distance(self, nearest)
+                self._social_approach_cd = max(0.0, float(getattr(self, "_social_approach_cd", 25.0)) - dt)
+                if (
+                    SOCIAL_DISTANCE <= dist <= SOCIAL_APPROACH_DISTANCE
+                    and self._social_approach_cd <= 0.0
+                    and not self.brain.paused
+                    and self.brain.state in ("sit", "look", "wander")
+                    and not getattr(self.brain, "_goal", False)
+                ):
+                    p_brain, (px, py) = _extract_brain_and_center(nearest)
+                    offset = -62.0 if self.brain.x < float(getattr(p_brain, "x", px)) else 62.0
+                    self.brain.go_to(float(getattr(p_brain, "x", px)) + offset, self.brain.y)
+                    self._social_approach_cd = random.uniform(35.0, 58.0)
                 self.interact_with(nearest, dt=dt, interaction=preferred_social)
         self._apply_position()
         self.renderer.draw(self.brain, self.animation_time, "")

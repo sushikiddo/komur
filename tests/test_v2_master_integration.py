@@ -103,8 +103,14 @@ def test_main_loop_targets_60fps(desktop_app, monkeypatch):
         return orig_after(ms, func, *args) if func is not None else None
 
     monkeypatch.setattr(desktop_app.root, "after", spy_after)
+    desktop_app.brain.command("play")
     desktop_app._loop()
-    assert 16 in scheduled
+    assert any(16 <= ms <= 40 for ms in scheduled), f"got {scheduled}, state={desktop_app.brain.state}"
+
+    scheduled.clear()
+    desktop_app.brain.state = "sleep"
+    desktop_app._loop()
+    assert any(ms >= 100 for ms in scheduled)
 
 
 def test_slice1_retro_costumes_growth_and_companion_social(desktop_app, monkeypatch):

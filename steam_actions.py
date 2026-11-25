@@ -1,4 +1,4 @@
-﻿"""Resolve Steam games from local manifests and dispatch official Steam URIs."""
+"""Resolve Steam games from local manifests and dispatch official Steam URIs."""
 import os
 import re
 from pathlib import Path
