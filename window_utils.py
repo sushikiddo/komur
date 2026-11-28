@@ -9,6 +9,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
+import platform
 import sys
 import tkinter as tk
 from ctypes import wintypes
@@ -42,10 +43,7 @@ def apply_color_key(window, key):
             # hemen ve 60ms sonra uygula ki ne titreme kalsın ne de geç oluşan katman kaçsın.
             def _on_map(_event, w=window):
                 _mac_apply_window_chrome()
-                try:
-                    w.after(50, _mac_key_out_black)
-                except tk.TclError:
-                    pass
+                _mac_after_while_alive(w, 50, _mac_key_out_black)
             window.bind("<Map>", _on_map, add="+")
             window.bind("<Destroy>", lambda _e: _mac_prune_keyed_windows(), add="+")
     except tk.TclError:
@@ -87,6 +85,16 @@ class _CGSize(ctypes.Structure):
 
 class _CGRect(ctypes.Structure):
     _fields_ = [("origin", _CGPoint), ("size", _CGSize)]
+
+
+def _rect_msgsend_name(machine: str | None = None) -> str:
+    """32 baytlık CGRect döndüren mesajlar için doğru objc_msgSend girişi.
+
+    arm64'te büyük yapılar da düz ``objc_msgSend`` ile (x8 sret yazmacı) döner; x86_64'te ise
+    16 bayttan büyük yapı dönüşleri ``objc_msgSend_stret`` ister, yoksa yığın bozulur.
+    """
+    machine = (machine if machine is not None else platform.machine()).lower()
+    return "objc_msgSend_stret" if machine in ("x86_64", "amd64", "i386") else "objc_msgSend"
 
 
 class _ObjC:
@@ -131,7 +139,7 @@ class _ObjC:
         self.get_bool = proto(ctypes.c_bool)
         self.get_bool_obj = proto(ctypes.c_bool, vp)
         self.send_point = proto(_CGPoint)
-        self.send_rect = proto(_CGRect)
+        self.send_rect = ctypes.CFUNCTYPE(_CGRect, vp, vp)((_rect_msgsend_name(), lib))
         self.utf8 = proto(ctypes.c_char_p)
         self._keyable_installed = False
         self._keyable_imp = None
@@ -348,12 +356,65 @@ def _mac_prune_keyed_windows():
 
 
 def _is_tk_nswindow(o, window) -> bool:
-    """NSStatusBarWindow / sistem pencerelerini atla; yalnız Tk pencerelerini (TKWindow/TKPanel) işle."""
+    """NSStatusBarWindow / sistem pencerelerini atla; yalnız *canlı* Tk pencerelerini işle.
+
+    Tk ``destroy`` sırasında NSWindow'u kapatır (``windowNumber`` -1 olur) ama nesne bir süre
+    otomatik bırakma havuzunda ``[NSApp windows]`` listesinde kalır. Böyle yıkılmakta olan bir
+    pencereye ``setStyleMask:`` göndermek AppKit'e içerik görünümünü yeniden taktırır; Tk'nin
+    ``-[TKContentView resetTkLayerBitmapContext]`` yordamı serbest bırakılmış bağlamı yeniden
+    CFRelease eder (SIGTRAP) ya da değiştirilen NSThemeFrame havuz boşalırken çöker (SIGSEGV).
+    Hiç eşlenmemiş pencerelerin de numarası yoktur; onlara <Map> anında zaten yeniden uygulanır.
+    """
     try:
         name = o.lib.object_getClassName(window) or b""
-        return b"TKWindow" in name or b"TKPanel" in name
+        if b"TKWindow" not in name and b"TKPanel" not in name:
+            return False
+        return o.get_long(window, o.sel("windowNumber")) > 0
     except Exception:
         return False
+
+
+def _mac_after_while_alive(window, ms, callback):
+    """``window.after`` ama pencere (ya da kökü) yıkılınca bekleyen çağrıyı iptal et.
+
+    Aksi hâlde Tkinter yıkımda Python komutunu siler, Tcl ``after`` betiği yine çalışır ve
+    "invalid command name ..._mac_key_out_black" arka plan hatası verir; geri çağrı da yıkılmış
+    pencereler varken AppKit'e dokunur.
+    """
+    try:
+        pending = window.__dict__.setdefault("_komur_mac_after_ids", set())
+        holder = []
+
+        def _run():
+            if holder:
+                pending.discard(holder[0])
+            try:
+                if not window.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            callback()
+
+        after_id = window.after(ms, _run)
+        holder.append(after_id)
+        pending.add(after_id)
+        if not window.__dict__.get("_komur_mac_after_bound"):
+            window.__dict__["_komur_mac_after_bound"] = True
+
+            def _cancel(event, w=window):
+                if getattr(event, "widget", None) is not w:
+                    return
+                ids = w.__dict__.get("_komur_mac_after_ids") or set()
+                for aid in list(ids):
+                    try:
+                        w.after_cancel(aid)
+                    except (tk.TclError, ValueError):
+                        pass
+                ids.clear()
+            window.bind("<Destroy>", _cancel, add="+")
+        return after_id
+    except (tk.TclError, AttributeError, RuntimeError):
+        return None
 
 
 def _is_tk_nspanel(o, window) -> bool:
@@ -462,10 +523,7 @@ def ensure_floating(window, *, keyable=False, elevated=False):
     if IS_MAC:
         _mac_apply_window_chrome(order_front=True)
         _mac_key_out_black()
-        try:
-            window.after(50, _mac_key_out_black)
-        except tk.TclError:
-            pass
+        _mac_after_while_alive(window, 50, _mac_key_out_black)
 
 
 def ensure_topmost_now(window=None):
@@ -632,6 +690,8 @@ def mac_present_key_window(window):
         app = o.send(o.cls("NSApplication"), o.sel("sharedApplication"))
         o.send_bool(app, o.sel("activateIgnoringOtherApps:"), True)
         for nswin in o.items(o.send(app, o.sel("windows"))):
+            if not _is_tk_nswindow(o, nswin):
+                continue
             if title and o.to_str(o.send(nswin, o.sel("title"))) == title:
                 o.make_keyable(nswin)
                 o.send_long(nswin, o.sel("setLevel:"), _NS_ELEVATED_LEVEL)

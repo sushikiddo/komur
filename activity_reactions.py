@@ -41,9 +41,12 @@ def _mac_running_app_names():
         return set()
 
 
+_mac_running_snapshot = None  # macOS: Tk ana iş parçacığında alınan çalışan uygulama adları
+
+
 def _mac_media_sessions():
     """macOS'ta yalnız halihazırda açık olan Spotify/Music çalıyorsa oturum listesi döner."""
-    running = _mac_running_app_names()
+    running = _mac_running_snapshot if _mac_running_snapshot is not None else _mac_running_app_names()
     sessions = []
     for app_name, key in (("Spotify", "spotify"), ("Music", "applemusic")):
         if app_name not in running:
@@ -234,7 +237,16 @@ class ActivityReactions:
         now = time.monotonic() if now is None else now
         if now - self._last >= self.interval and (self._worker is None or not self._worker.is_alive()):
             self._last = now
-            self._worker = threading.Thread(target=self._sample, daemon=True)
+            pre = None
+            if sys.platform == 'darwin':
+                # AppKit/CoreGraphics çağrıları ana (Tk) iş parçacığında kalmalı.
+                global _mac_running_snapshot
+                try:
+                    _mac_running_snapshot = _mac_running_app_names()
+                    pre = (get_foreground_info(), _is_fullscreen())
+                except Exception:
+                    pre = None
+            self._worker = threading.Thread(target=self._sample, args=(pre,), daemon=True)
             self._worker.start()
         return self.current
 
@@ -245,11 +257,14 @@ class ActivityReactions:
     def close(self):
         self._media.close()
 
-    def _sample(self):
+    def _sample(self, pre=None):
         try:
-            info = get_foreground_info()
+            if pre is not None:
+                info, fullscreen = pre
+            else:
+                info = get_foreground_info()
+                fullscreen = _is_fullscreen()
             idle = idle_seconds()
-            fullscreen = _is_fullscreen()
             media, playing = None, False
             if not active_game(info):      # oyunda medya sorgusuna gerek yok
                 sessions = self._media.query()

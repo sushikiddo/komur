@@ -1028,6 +1028,8 @@ build_system_tab = build_audio_tab
 def on_name_change(app):
     name = app.name_var.get().strip() or "Kömür"
     app.name_var.set(name)
+    if name == app.settings.get("name"):
+        return
     app.settings.set("name", name)
     app.say(f"Artık adım {name}!", 4)
 
@@ -1052,8 +1054,25 @@ def on_size_change(app, size):
 
 def on_opacity_change(app):
     value = int(app.opacity_var.get())
-    app.settings.set("opacity", value)
+    app.settings.set("opacity", value, save=False)
     app._apply_opacity()
+    root = getattr(app, "root", None)
+    job = getattr(app, "_opacity_save_job", None)
+    if job is not None and root is not None:
+        try:
+            root.after_cancel(job)
+        except Exception:
+            pass
+
+    def _persist():
+        app._opacity_save_job = None
+        app.settings.save()
+
+    try:
+        app._opacity_save_job = root.after(400, _persist)
+    except Exception:
+        app._opacity_save_job = None
+        app.settings.save()
 
 
 def on_friends_change(app):
@@ -1062,6 +1081,8 @@ def on_friends_change(app):
     except (ValueError, tk.TclError):
         count = max(0, min(3, int(app.settings.get("friends") or 0)))
     app.friends_var.set(count)
+    if count == int(app.settings.get("friends") or 0):
+        return
     app.settings.set("friends", count)
     app._rebuild_companions()
     app._apply_opacity()

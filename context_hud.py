@@ -578,8 +578,14 @@ class ModernContextHUD:
         idx = ACCESSORY_ORDER.index(current) if current in ACCESSORY_ORDER else 0
         nxt = ACCESSORY_ORDER[(idx + 1) % len(ACCESSORY_ORDER)]
         try:
-            from costumes import normalize_accessories
-            slots = normalize_accessories(nxt)
+            from costumes import normalize_accessories, slot_for
+            from wardrobe_ui import current_wardrobe_slots
+            slots = dict(current_wardrobe_slots(settings)) if settings is not None else {}
+            old_slot = slot_for(current)
+            if current and old_slot and slots.get(old_slot) == current:
+                slots.pop(old_slot, None)      # yalnız döngüdeki parçayı değiştir
+            if nxt:
+                slots = normalize_accessories({**slots, slot_for(nxt) or "head": nxt})
         except Exception:
             slots = {}
         if settings is not None:

@@ -1966,7 +1966,10 @@ def main():
 
     setup_logging()
     enable_dpi_awareness()
-    handle, first = acquire_instance()
+    if options.smoke_test and not IS_WINDOWS:
+        handle, first = None, True   # smoke test geçici profille çalışır; açık Kömür'ü engellemesin
+    else:
+        handle, first = acquire_instance()
     if not first:
         if not IS_WINDOWS:
             return   # macOS: zaten açık bir Kömür var

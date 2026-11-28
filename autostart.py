@@ -44,9 +44,29 @@ def mac_plist_path():
     return Path.home() / "Library" / "LaunchAgents" / f"{MAC_LABEL}.plist"
 
 
+def _mac_enabled():
+    path = mac_plist_path()
+    try:
+        with path.open("rb") as handle:
+            data = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return False
+    args = data.get("ProgramArguments") if isinstance(data, dict) else None
+    if not args or not isinstance(args, list):
+        return False
+    if getattr(sys, "frozen", False) and args != _argv():
+        # Paket taşınmış/güncellenmiş: kaydı mevcut çalıştırılabilire eşitle.
+        try:
+            _set_mac(True)
+            return True
+        except OSError:
+            logging.exception("Could not re-sync autostart plist")
+    return os.path.exists(str(args[0]))
+
+
 def is_enabled():
     if _MAC:
-        return mac_plist_path().is_file()
+        return _mac_enabled()
     if not available():
         return False
     try:

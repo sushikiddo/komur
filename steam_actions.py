@@ -1,6 +1,7 @@
 """Resolve Steam games from local manifests and dispatch official Steam URIs."""
 import os
 import re
+import sys
 from pathlib import Path
 
 ALIASES = {'cs': (730, 'Counter-Strike 2'), 'cs2': (730, 'Counter-Strike 2'),
@@ -11,10 +12,13 @@ ALIASES = {'cs': (730, 'Counter-Strike 2'), 'cs2': (730, 'Counter-Strike 2'),
            'pubg': (578080, 'PUBG: BATTLEGROUNDS'), 'pubg battlegrounds': (578080, 'PUBG: BATTLEGROUNDS')}
 
 PROCESS_NAMES = {730: 'cs2.exe', 570: 'dota2.exe', 578080: 'TslGame.exe'}
+MAC_PROCESS_NAMES = {730: 'cs2', 570: 'dota2', 578080: 'TslGame'}
 
 
 def steam_roots():
     roots = []
+    if sys.platform == 'darwin':
+        roots.append(Path.home() / 'Library' / 'Application Support' / 'Steam')
     if os.name == 'nt':
         try:
             import winreg
@@ -72,6 +76,14 @@ def download_state(appid, roots=None):
 
 def process_running(appid, runner):
     """Check a known game executable; unknown games cannot be verified this way."""
+    if sys.platform == 'darwin':
+        mac_name = MAC_PROCESS_NAMES.get(appid)
+        if not mac_name:
+            return False
+        try:
+            return runner(['pgrep', '-x', mac_name], 5).returncode == 0
+        except Exception:
+            return False
     name = PROCESS_NAMES.get(appid)
     if not name:
         return False

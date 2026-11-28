@@ -57,8 +57,26 @@ def select_social_interaction(brain_a, brain_b, preferred: str | None = None) ->
     return "mutual_groom"
 
 
-def apply_social_interaction(cat_a, cat_b, dt: float = 0.016, interaction: str | None = None) -> str | None:
-    """Trigger mutual_groom, pass_ball, or cuddle_sleep when distance < 90."""
+def _set_state(brain, state):
+    """Change state only when different, via the brain's own API when it has one."""
+    if getattr(brain, "state", None) == state:
+        return
+    change = getattr(brain, "_change", None)
+    if callable(change):
+        try:
+            change(state)
+            return
+        except (KeyError, TypeError):
+            pass
+    brain.state = state
+
+
+def apply_social_interaction(cat_a, cat_b, dt: float = 0.016, interaction: str | None = None,
+                             passive_b: bool = False) -> str | None:
+    """Trigger mutual_groom, pass_ball, or cuddle_sleep when distance < 90.
+
+    ``passive_b``: cat_b is the user's own cat; its state/emote/position are never touched.
+    """
     brain_a, (ax, ay) = _extract_brain_and_center(cat_a)
     brain_b, (bx, by) = _extract_brain_and_center(cat_b)
     dist = math.hypot(bx - ax, by - ay)
@@ -77,59 +95,61 @@ def apply_social_interaction(cat_a, cat_b, dt: float = 0.016, interaction: str |
         return None
 
     mode = select_social_interaction(brain_a, brain_b, preferred=interaction)
-    # Face each other
-    if bx >= ax:
-        brain_a.facing = 1
-        brain_b.facing = -1
-    else:
-        brain_a.facing = -1
-        brain_b.facing = 1
+    # Face each other (never turn the user's own cat)
+    brain_a.facing = 1 if bx >= ax else -1
+    if not passive_b:
+        brain_b.facing = -brain_a.facing
 
     if mode == "mutual_groom":
-        brain_a.state = "groom"
-        brain_b.state = "groom"
+        _set_state(brain_a, "groom")
         brain_a.emote = "heart"
-        brain_b.emote = "heart"
+        if not passive_b:
+            _set_state(brain_b, "groom")
+            brain_b.emote = "heart"
     elif mode == "pass_ball":
-        brain_a.state = "play"
-        brain_b.state = "play"
+        _set_state(brain_a, "play")
         phase = float(getattr(cat_a, "_ball_pass_phase", 0.0)) + max(0.0, float(dt)) * 2.2
         cat_a._ball_pass_phase = phase
-        cat_b._ball_pass_phase = phase
         t_norm = 0.5 + 0.5 * math.sin(phase)
         w_a = float(getattr(brain_a, "width", 260.0) or 260.0)
-        w_b = float(getattr(brain_b, "width", 260.0) or 260.0)
         h_a = float(getattr(brain_a, "height", 280.0) or 280.0)
-        h_b = float(getattr(brain_b, "height", 280.0) or 280.0)
         direction = 1.0 if math.cos(phase) >= 0 else -1.0
         brain_a.ball_x = w_a * (0.25 + 0.55 * t_norm)
         brain_a.ball_y = h_a * 0.85
         brain_a.ball_vx = direction * 85.0
-        brain_b.ball_x = w_b * (0.80 - 0.55 * t_norm)
-        brain_b.ball_y = h_b * 0.85
-        brain_b.ball_vx = -direction * 85.0
         brain_a.emote = "!"
-        brain_b.emote = "!"
+        if not passive_b:
+            _set_state(brain_b, "play")
+            cat_b._ball_pass_phase = phase
+            w_b = float(getattr(brain_b, "width", 260.0) or 260.0)
+            h_b = float(getattr(brain_b, "height", 280.0) or 280.0)
+            brain_b.ball_x = w_b * (0.80 - 0.55 * t_norm)
+            brain_b.ball_y = h_b * 0.85
+            brain_b.ball_vx = -direction * 85.0
+            brain_b.emote = "!"
     elif mode == "play_chase":
-        brain_a.state = "play"
-        brain_b.state = "wander"
+        _set_state(brain_a, "play")
         brain_a.emote = "!"
-        brain_b.emote = "!"
+        if not passive_b:
+            _set_state(brain_b, "wander")
+            brain_b.emote = "!"
     elif mode == "cuddle_sleep":
-        brain_a.state = "sleep"
-        brain_b.state = "sleep"
+        _set_state(brain_a, "sleep")
         brain_a.emote = "Zzz"
-        brain_b.emote = "Zzz"
-        if dist > 28.0 and hasattr(brain_a, "x") and hasattr(brain_b, "x"):
-            step = min(1.5, (dist - 28.0) * 0.15)
-            dx = (bx - ax) / max(dist, 1e-4)
-            brain_a.x += dx * step * 0.5
-            brain_b.x -= dx * step * 0.5
+        if not passive_b:
+            _set_state(brain_b, "sleep")
+            brain_b.emote = "Zzz"
+            if dist > 28.0 and hasattr(brain_a, "x") and hasattr(brain_b, "x"):
+                step = min(1.5, (dist - 28.0) * 0.15)
+                dx = (bx - ax) / max(dist, 1e-4)
+                brain_a.x += dx * step * 0.5
+                brain_b.x -= dx * step * 0.5
 
     cat_a.social_state = mode
-    cat_b.social_state = mode
     cat_a.social_partner = cat_b
-    cat_b.social_partner = cat_a
+    if not passive_b:
+        cat_b.social_state = mode
+        cat_b.social_partner = cat_a
     return mode
 
 
@@ -243,7 +263,8 @@ class Companion:
 
     def interact_with(self, other, dt: float = 0.016, interaction: str | None = None) -> str | None:
         """Evaluate social interaction with another cat/companion."""
-        return apply_social_interaction(self, other, dt=dt, interaction=interaction)
+        return apply_social_interaction(self, other, dt=dt, interaction=interaction,
+                                        passive_b=not isinstance(other, Companion))
 
     def step(self, dt, pointer, peers=None, preferred_social=None):
         if not self.brain.paused:

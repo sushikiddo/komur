@@ -372,8 +372,58 @@ def _default_lock():
 
 
 def _default_run(argv: list[str], timeout: float = 60.0) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout, creationflags=CREATE_NO_WINDOW, stdin=subprocess.DEVNULL)
+    if IS_WINDOWS:
+        return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout, creationflags=CREATE_NO_WINDOW, stdin=subprocess.DEVNULL)
+    # POSIX: çıktı geçici dosyaya; arka plana atılan çocuk boruyu tutup bizi bloklamaz.
+    import tempfile
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        env = os.environ.copy()
+        if sys.platform == "darwin":
+            # GUI uygulamasının PATH'inde Homebrew yok.
+            extra = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin"]
+            env["PATH"] = ":".join(extra + [p for p in env.get("PATH", "").split(":") if p and p not in extra])
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                start_new_session=True, env=env)
+        try:
+            rc = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, 9)
+            except OSError:
+                proc.kill()
+            proc.wait()
+            raise
+        out.seek(0)
+        err.seek(0)
+        return subprocess.CompletedProcess(argv, rc, out.read().decode("utf-8", "replace"),
+                                           err.read().decode("utf-8", "replace"))
+
+
+def _mac_app_bundle_path(stem: str) -> str | None:
+    """Uygulama adından .app paketinin yolunu bul."""
+    for directory in MAC_APP_DIRS:
+        candidate = Path(directory) / f"{stem}.app"
+        try:
+            if candidate.is_dir():
+                return str(candidate)
+        except OSError:
+            continue
+    return None
+
+
+def _mac_executable_name(app_path: str | None, fallback: str) -> str:
+    """Info.plist CFBundleExecutable ile gerçek süreç adını çöz (VS Code -> Electron vb.)."""
+    if app_path:
+        try:
+            import plistlib
+            with open(os.path.join(app_path, "Contents", "Info.plist"), "rb") as fh:
+                exe = plistlib.load(fh).get("CFBundleExecutable")
+            if isinstance(exe, str) and exe:
+                return exe
+        except Exception:
+            pass
+    return fallback
 
 
 def _default_popen(argv: list[str]):
@@ -853,7 +903,12 @@ class PCActions:
             return f"{label} bulunamadı."
         app = resolved[1][-1]
         if force:
-            proc = self.runner(["pkill", "-x", app], 20)
+            app_path = _mac_app_bundle_path(app)
+            exe = _mac_executable_name(app_path, app)
+            proc = self.runner(["pkill", "-x", exe], 20)
+            if proc.returncode != 0:
+                if app_path:
+                    proc = self.runner(["pkill", "-f", app_path + "/Contents/"], 20)
             return f"{label} zorla kapatıldı." if proc.returncode == 0 else f"{label} zaten çalışmıyor."
         quoted = _applescript_text(app)
         script = (f"if application {quoted} is running then\n"
@@ -922,7 +977,10 @@ class PCActions:
         """Mevcut seviye okunamaz (stdlib yok); önce sıfıra indirip hedefe kadar artırır."""
         percent = max(0, min(100, int(percent)))
         if IS_MAC:
-            self.runner(["osascript", "-e", f"set volume output volume {percent}"], 10)
+            proc = self.runner(["osascript", "-e", f"set volume output volume {percent}"], 10)
+            if getattr(proc, "returncode", 0) != 0:
+                detail = ((getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "")).strip()[:120]
+                return f"Ses seviyesi ayarlanamadı: {detail}" if detail else "Ses seviyesi ayarlanamadı."
             return f"Ses seviyesi %{percent} yapıldı."
         self.keybd(VK_VOLUME_DOWN, 50)
         ups = round(percent / self.VOLUME_STEP)
@@ -1088,7 +1146,10 @@ class PCActions:
     def run_command(self, command: str) -> str:
         argv = (["/bin/zsh", "-c", command] if IS_MAC else
                 ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command])
-        proc = self.runner(argv, 60)
+        try:
+            proc = self.runner(argv, 60)
+        except subprocess.TimeoutExpired:
+            return "Komut 60 saniyede bitmedi, zaman aşımı."
         out = (proc.stdout or "").strip()
         err = (proc.stderr or "").strip()
         text = out if out else err

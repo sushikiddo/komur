@@ -107,7 +107,19 @@ def set_habit_enabled(ui):
 
 def set_accessory(ui, label):
     value = next((key for key, text in ACCESSORY_LABELS.items() if text == label), None)
-    ui.app.settings.set("accessory", value)
+    from costumes import normalize_accessories, slot_for
+    from wardrobe_ui import current_wardrobe_slots
+    old = ui.app.settings.get("accessory")
+    slots = dict(current_wardrobe_slots(ui.app.settings))
+    old_slot = slot_for(old)
+    if old and old_slot and slots.get(old_slot) == old:
+        slots.pop(old_slot, None)          # önceki tekli seçimi çıkar, diğer slotlara dokunma
+    if value:
+        slots = normalize_accessories({**slots, slot_for(value) or "head": value})
+    ui.app.settings.update(accessory=value, accessories=slots)
+    renderer = getattr(ui.app, "renderer", None)
+    if renderer is not None:
+        renderer.accessory = slots if slots else None
 
 
 def set_activity_level(ui, label):

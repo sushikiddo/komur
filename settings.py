@@ -72,13 +72,25 @@ def config_path() -> Path:
     return config_dir() / FILE_NAME
 
 
+def _type_ok(value, default) -> bool:
+    """True when ``value`` has a type compatible with the default (None default = anything)."""
+    if default is None:
+        return True
+    if isinstance(default, bool):
+        return isinstance(value, bool)
+    if isinstance(default, (int, float)):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, type(default))
+
+
 class Settings:
     """Dict-backed settings with attribute-style ``get``/``set`` and autosave."""
 
     def __init__(self, data=None):
         self._data = dict(DEFAULTS)
         if data:
-            self._data.update({k: v for k, v in data.items() if k in DEFAULTS})
+            self._data.update({k: v for k, v in data.items()
+                               if k in DEFAULTS and _type_ok(v, DEFAULTS[k])})
         if self._data.get("persona") not in ("asil_tembel", "hiperaktif_yavru"):
             self._data["persona"] = DEFAULTS["persona"]   # kaldırılan kişilikler (bilge_yazilimci) varsayılana göç eder
 
@@ -97,9 +109,16 @@ class Settings:
         try:
             directory = config_dir()
             directory.mkdir(parents=True, exist_ok=True)
-            config_path().write_text(
-                json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            target = config_path()
+            tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+            try:
+                tmp.write_text(
+                    json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                os.replace(tmp, target)
+            finally:
+                if tmp.exists():
+                    tmp.unlink()
         except OSError:
             logging.exception("Could not save settings")
 

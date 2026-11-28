@@ -34,9 +34,15 @@ class YarnPhysics:
 
     def step(self, dt, area, platforms=()):
         """``area``: (left, top, right, bottom) çalışma alanı. Hareket ettiyse True."""
-        if self.resting:
-            return False
         left, top, right, bottom = area
+        if self.resting:
+            rest_floor = bottom
+            for p_left, p_top, p_right in platforms:
+                if p_left <= self.x <= p_right and abs(self.y + self.r - p_top) <= 2.0:
+                    rest_floor = p_top
+            if abs(self.y + self.r - rest_floor) <= 2.0:
+                return False
+            self.resting = False               # destek (pencere) kayboldu/taşındı: tekrar düş
         prev_bottom = self.y + self.r
         self.vy += GRAVITY * dt
         self.x += self.vx * dt

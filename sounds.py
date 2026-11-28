@@ -77,14 +77,15 @@ SOUND_VARIANTS: dict[str, tuple[str, ...]] = {
 }
 
 _mixer_initialized = False
+_mixer_failed = False
 _lock = threading.Lock()
 _last_variant: dict[str, str] = {}
 _last_play_time = 0.0
 
 
 def _init_mixer():
-    global _mixer_initialized, _last_play_time
-    if pygame is None or _mixer_initialized:
+    global _mixer_initialized, _mixer_failed, _last_play_time
+    if pygame is None or _mixer_initialized or _mixer_failed:
         return
     try:
         pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
@@ -92,6 +93,7 @@ def _init_mixer():
         with _lock:
             _last_play_time = 0.0
     except Exception:
+        _mixer_failed = True
         logging.exception("pygame.mixer başlatılamadı")
 
 
@@ -159,7 +161,7 @@ def play(
             return
         _last_play_time = now
 
-    master_vol = max(0, min(100, volume)) / 100.0
+    master_vol = max(0, min(100, 100 if volume is None else volume)) / 100.0
     factor = _resolve_pitch_factor(pitch_shift)
 
     if use_afplay or use_winsound:

@@ -158,9 +158,15 @@ def parse_intent(text: str) -> tuple[str, dict, str] | None:
     # -- kapatma / yeniden başlatma / iptal
     if re.search(r"(kapat|kapan|yeniden baslat).*(iptal)|iptal.*(kapat|yeniden baslat)", n):
         return "cancel_shutdown", {}, ""
-    if re.search(r"\b(bilgisayar|pc|makine|sistem)\w*\b.*\b(yeniden baslat|restart|resetle)|\b(yeniden baslat|restart)\b", n):
+    # Süre ifadesi ("5 dakika sonra") ve dolgu sözcükler çıkarılınca hedef yalnızca bilgisayar olmalı;
+    # "Spotify'ı yeniden başlat" / "bilgisayarda chrome'u kapat" makineyi etkilemez.
+    n_pow = re.sub(r"\b(?:\d+(?:[.,]\d+)?|yarim|bir|iki|uc|on bes|on|yirmi|otuz|kirk bes)\s*(?:saat|dakika|dk|saniye|sn)\w*(?:\s+(?:sonra|icinde))?", " ", n)
+    n_pow = re.sub(r"\b(?:simdi|hemen|lutfen|artik|komur|hadi|bir)\b", " ", n_pow)
+    n_pow = re.sub(r"\s+", " ", n_pow).strip(" .,!?")
+    _pc_target = r"(?:bilgisayar|pc|makine|sistem|windows|mac)\w*(?:'\w*)?"
+    if re.search(r"\b" + _pc_target + r"\s+(?:yeniden baslat|restart|resetle)\w*$|^(?:yeniden baslat|restart|resetle)\w*$|^(?:yeniden baslat|restart)\w*\s+" + _pc_target + r"$", n_pow):
         return "restart", {"minutes": int(_minutes_in(n) or 0)}, ""
-    if re.search(r"\b(bilgisayar|pc|makine|sistem|windows)\w*\b.*\bkapat|\bkapat\w*\s+(bilgisayar|pc)\w*|\bshutdown\b", n):
+    if re.search(r"\b" + _pc_target + r"\s+kapat\w*$|^kapat\w*\s+" + _pc_target + r"$|\bshutdown\b", n_pow):
         return "shutdown", {"minutes": int(_minutes_in(n) or 0)}, ""
     if re.search(r"\b(ekran|bilgisayar|pc|oturum)\w*\s+kilitle|\bkilitle\b", n):
         return "lock_screen", {}, ""
@@ -212,11 +218,17 @@ def parse_intent(text: str) -> tuple[str, dict, str] | None:
     # -- zamanlayıcı / hatırlatıcı
     mins = _minutes_in(n)
     if mins and re.search(r"(hatirlat|zamanlayici|sayac|alarm|timer|uyar|haber ver|soyle)", n):
+        _tm = r"(?=\s+(?:\d+(?:[.,]\d+)?|\w+(?:\s+\w+)?)\s*(?:saat|dakika|dk|saniye|sn)\b)"
+        pre_m = re.search(r"^(.+?)\s+(?:diye|icin)" + _tm, n_clean)
         label_m = re.search(r"(?:sonra|icin)\s+(.+?)\s*(?:diye|hatirlat|uyar|haber ver|soyle)", n_clean)
         label = raw
-        if label_m:
+        if pre_m:
+            # "çay demle diye 5 dakika sonra hatırlat": etiket süreden önce gelir
+            orig = re.search(r"^(.+?)\s+(?:diye|[iİıI][çcÇC][iİıI][nN])" + _tm, raw, re.I)
+            label = re.sub(r"^(?:k[öo]m[üu]r[,\s]+|l[üu]tfen\s+|hadi\s+)+", "", (orig.group(1) if orig else pre_m.group(1)), flags=re.I).strip(" ,.")
+        elif label_m:
             # orijinal metinden (Türkçe karakterli) parçayı yakalamaya çalış
-            orig = re.search(r"(?:sonra|için)\s+(.+?)\s*(?:diye|hatırlat|uyar|haber ver|söyle)", raw, re.I)
+            orig = re.search(r"(?:sonra|[iİıI][çcÇC][iİıI][nN])\s+(.+?)\s*(?:diye|hatırlat|uyar|haber ver|söyle)", raw, re.I)
             label = (orig.group(1) if orig else label_m.group(1)).strip(" ,.")
         else:
             label = "Süre doldu!"
@@ -234,9 +246,9 @@ def parse_intent(text: str) -> tuple[str, dict, str] | None:
         return "_chat", {}, "Ne yazayım? 'not al: süt al' gibi söylersen masaüstüne yazarım."
 
     # -- komut
-    m = re.search(r"^(?:komut(?:u)? (?:calistir|cal)|powershell(?:de|'de)?|cmd(?:de|'de)?)\s*[:\-]?\s*(.+)$", n)
+    m = re.search(r"^(?:komut(?:u)? (?:calistir|cal)\b|powershell(?:de|'de)?(?![\w'])|cmd(?:de|'de)?(?![\w']))\s*[:\-]?\s*(.+)$", n)
     if m:
-        orig = re.search(r"^(?:komut(?:u)? (?:çalıştır|çalistir|calistir|çal)|powershell(?:de|'de)?|cmd(?:de|'de)?)\s*[:\-]?\s*(.+)$", raw, re.I)
+        orig = re.search(r"^(?:komut(?:u)? (?:çalıştır|çalistir|calistir|çal)\b|powershell(?:de|'de)?(?![\w'])|cmd(?:de|'de)?(?![\w']))\s*[:\-]?\s*(.+)$", raw, re.I)
         return "run_command", {"command": (orig.group(1) if orig else m.group(1)).strip()}, ""
 
     # -- G?ncel bilgi edinme (arama sayfas? a?ma iste?inden ayr?)
@@ -298,6 +310,7 @@ def parse_intent(text: str) -> tuple[str, dict, str] | None:
     if m:
         obj = m.group(1).strip()
         obj = re.sub(r"^(uygulama\w*|program\w*)\s+", "", obj)
+        obj = re.sub(r"\s+yeniden$", "", obj)   # "Spotify'ı yeniden başlat": bilgisayarı değil uygulamayı başlat
         if not re.search(r"\b(ses|ekran|isik|kapi|pencere)\b", obj):
             key_obj = _strip_suffix(obj, lambda s: resolve_app_key(s) is not None)
             key = resolve_app_key(key_obj)

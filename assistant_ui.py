@@ -337,7 +337,13 @@ class AssistantUI:
                 self.app.say(timer["label"], 15)
                 self.append("Hatırlatma", timer["label"])
                 if self.memory and timer.get("memory_id"):
-                    next_due = self.memory.complete_reminder(timer["memory_id"])
+                    try:
+                        next_due = self.memory.complete_reminder(timer["memory_id"])
+                    except (sqlite3.Error, OSError):
+                        # Kayıt güncellenemese de tick'in geri kalanı çalışsın; hatırlatıcı bir dakika sonra yeniden denensin.
+                        logging.exception("Could not complete reminder %s", timer.get("memory_id"))
+                        self.actions.timers.append({**timer, 'due': now + 60})
+                        continue
                     if next_due:
                         self.actions.timers.append({**timer, 'due': now + max(0, next_due - time.time())})
         if self.updates is not None:
@@ -365,12 +371,17 @@ class AssistantUI:
             self.append("Kömür", result.reply)
             self.app.say(result.reply, max(8, min(30, 4 + len(result.reply) * .06)))
             approved = []
-            for pending in result.needs_confirmation:   # onay sorulurken giriş kilitli kalır
-                if self.approve_action(pending):
-                    approved.append(pending)
-                else:
-                    self.append("Kömür", "İşlem iptal edildi.")
-            self.set_busy(False)
+            try:
+                for pending in result.needs_confirmation:   # onay sorulurken giriş kilitli kalır
+                    if self.approve_action(pending):
+                        approved.append(pending)
+                    else:
+                        self.append("Kömür", "İşlem iptal edildi.")
+            except Exception:  # noqa: BLE001 - onay penceresi hatası girişi kilitli bırakmasın
+                logging.exception("Approval flow failed")
+                approved = []
+            finally:
+                self.set_busy(False)
             if approved:
                 if result.remaining_actions and len(approved) == len(result.needs_confirmation) == 1:
                     self.submit(self.commands.confirm_and_continue, approved[0], result.remaining_actions)

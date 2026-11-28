@@ -554,6 +554,7 @@ class LofiAmbiencePlayer:
         self._afplay_proc = None
         self._afplay_path: str | None = None
         self._afplay_vol: float = 0.35
+        self._afplay_gen: int = 0
 
     @property
     def is_playing(self) -> bool:
@@ -567,26 +568,45 @@ class LofiAmbiencePlayer:
             )
         return self._wav_bytes
 
-    def _afplay_loop(self, afplay_bin: str, path: str) -> None:
+    def _afplay_loop(self, afplay_bin: str, path: str, gen: int = 0) -> None:
+        fast_failures = 0
         try:
-            while self._playing:
+            while True:
+                with self._lock:
+                    if not self._playing or gen != self._afplay_gen:
+                        break
+                if not os.path.exists(path):
+                    break
                 vol = f"{max(0.0, min(1.0, self._afplay_vol)):.2f}"
+                started = time.monotonic()
                 proc = subprocess.Popen(
                     [afplay_bin, "-v", vol, path],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
                 with self._lock:
-                    if not self._playing:
+                    if not self._playing or gen != self._afplay_gen:
                         proc.terminate()
                         break
                     self._afplay_proc = proc
-                proc.wait()
+                rc = proc.wait()
+                if rc != 0 or (time.monotonic() - started) < 0.5:
+                    fast_failures += 1
+                    if fast_failures >= 3:
+                        logging.debug("afplay lofi döngüsü art arda başarısız, durduruluyor")
+                        with self._lock:
+                            if gen == self._afplay_gen:
+                                self._playing = False
+                        break
+                    time.sleep(min(2.0, 0.25 * (2 ** fast_failures)))
+                else:
+                    fast_failures = 0
         except Exception:
             logging.debug("macOS afplay lofi döngüsü durdu", exc_info=True)
         finally:
             with self._lock:
-                self._afplay_proc = None
+                if gen == self._afplay_gen:
+                    self._afplay_proc = None
             try:
                 if os.path.exists(path):
                     os.unlink(path)
@@ -615,8 +635,9 @@ class LofiAmbiencePlayer:
                         f.write(wav_data)
                         path = f.name
                     self._afplay_path = path
+                    self._afplay_gen += 1
                     threading.Thread(
-                        target=self._afplay_loop, args=(afplay_bin, path), daemon=True
+                        target=self._afplay_loop, args=(afplay_bin, path, self._afplay_gen), daemon=True
                     ).start()
                     return True
                 except Exception:
@@ -659,6 +680,7 @@ class LofiAmbiencePlayer:
     def stop(self) -> None:
         with self._lock:
             self._playing = False
+            self._afplay_gen += 1
             proc = self._afplay_proc
             self._afplay_proc = None
             path = self._afplay_path

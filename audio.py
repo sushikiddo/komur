@@ -65,25 +65,46 @@ _REAL_WAV_VARIANTS: dict[str, tuple[str, ...]] = {
 }
 
 
+_AFPLAY_SLOTS = threading.BoundedSemaphore(3)
+AFPLAY_TIMEOUT = 6
+
+
 def play_wav_bytes(data, volume=None, pan_x=None, screen_w=None):
-    """WAV baytlarını afplay ile çal (bloklar; arka plan iş parçacığında çağır)."""
+    """WAV baytlarını afplay ile çal (bloklar; arka plan iş parçacığında çağır).
+
+    Eşzamanlı afplay sayısı sınırlıdır; meşgulse ses atlanır.
+    """
     if not AFPLAY:
         return
-    payload = data
-    if pan_x is not None:
-        payload = pan_wav_stereo(payload, pan_x, screen_w or 1920, master_vol=1.0)
-    with tempfile.NamedTemporaryFile(prefix="komur-", suffix=".wav", delete=False) as handle:
-        handle.write(payload)
-        tmp_path = handle.name
+    if not _AFPLAY_SLOTS.acquire(blocking=False):
+        return
+    tmp_path = None
     try:
+        payload = data
+        if pan_x is not None:
+            payload = pan_wav_stereo(payload, pan_x, screen_w or 1920, master_vol=1.0)
+        with tempfile.NamedTemporaryFile(prefix="komur-", suffix=".wav", delete=False) as handle:
+            handle.write(payload)
+            tmp_path = handle.name
         command = [AFPLAY, tmp_path]
         if volume is not None:
             command += ["-v", f"{max(0.0, min(1.0, float(volume))):.2f}"]
-        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       timeout=12, check=False)
+        proc = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            proc.wait(timeout=AFPLAY_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=1)
+            except Exception:
+                pass
     finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        _AFPLAY_SLOTS.release()
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 RATE = 22050
 _cache = {}
